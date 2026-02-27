@@ -1,6 +1,9 @@
 import { PublicKey } from "@solana/web3.js";
 import { checkMintAccount } from "./checks/mint-authority.js";
 import { checkTopHolders } from "./checks/top-holders.js";
+import { checkLiquidity, type LiquidityResult } from "./checks/liquidity.js";
+import { checkMetadata, type MetadataResult } from "./checks/metadata.js";
+import { checkTokenAge, type TokenAgeResult } from "./checks/token-age.js";
 import { computeRiskScore } from "./risk-score.js";
 import { ApiError } from "../utils/errors.js";
 
@@ -32,10 +35,16 @@ export interface TokenCheckResult {
       holder_count_estimate: number | null;
       risk: "SAFE" | "HIGH" | "CRITICAL";
     };
-    liquidity: null;
-    metadata: null;
-    token_age_hours: null;
+    liquidity: LiquidityResult | null;
+    metadata: {
+      mutable: boolean;
+      has_uri: boolean;
+      uri_accessible: boolean;
+      risk: "SAFE" | "WARNING";
+    } | null;
+    token_age_hours: number | null;
     is_token_2022: boolean;
+    token_2022_extensions: string[] | null;
   };
 }
 
@@ -52,14 +61,29 @@ export async function checkToken(
     );
   }
 
+  // Step 1: mint account data (needed for supply → top holders)
   const mintData = await checkMintAccount(mintAddress);
-  const holders = await checkTopHolders(mintAddress, mintData.supplyRaw);
-  const { risk_score, risk_level } = computeRiskScore(mintData, holders);
+
+  // Step 2: run remaining checks in parallel
+  const [holders, liquidity, metadata, tokenAge] = await Promise.all([
+    checkTopHolders(mintAddress, mintData.supplyRaw),
+    checkLiquidity(mintAddress).catch((): LiquidityResult | null => null),
+    checkMetadata(mintAddress).catch((): MetadataResult | null => null),
+    checkTokenAge(mintAddress).catch((): TokenAgeResult | null => null),
+  ]);
+
+  const { risk_score, risk_level } = computeRiskScore({
+    mint: mintData,
+    holders,
+    liquidity,
+    metadata,
+    tokenAge,
+  });
 
   return {
     mint: mintAddress,
-    name: null,
-    symbol: null,
+    name: metadata?.name ?? null,
+    symbol: metadata?.symbol ?? null,
     checked_at: new Date().toISOString(),
     risk_score,
     risk_level,
@@ -79,10 +103,19 @@ export async function checkToken(
         decimals: mintData.decimals,
       },
       top_holders: holders,
-      liquidity: null,
-      metadata: null,
-      token_age_hours: null,
+      liquidity,
+      metadata: metadata
+        ? {
+            mutable: metadata.mutable,
+            has_uri: metadata.has_uri,
+            uri_accessible: metadata.has_uri, // v1: URI existence = accessibility
+            risk: metadata.risk,
+          }
+        : null,
+      token_age_hours: tokenAge?.token_age_hours ?? null,
       is_token_2022: mintData.isToken2022,
+      token_2022_extensions:
+        mintData.extensions.length > 0 ? mintData.extensions : null,
     },
   };
 }
