@@ -1,6 +1,7 @@
 import { PublicKey } from "@solana/web3.js";
 import { getConnection } from "../../solana/rpc.js";
 import { logger } from "../../utils/logger.js";
+import type { JupiterQuote } from "./jupiter.js";
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -70,10 +71,21 @@ interface LpLockResult {
 
 export async function checkLiquidity(
   mintAddress: string,
+  prefetchedQuote?: JupiterQuote | null,
 ): Promise<LiquidityResult> {
   try {
     // Step 1: Jupiter quote — existence + depth (Level 1)
-    const jupiter = await fetchJupiterQuote(mintAddress);
+    // Use pre-fetched quote from shared round-trip when available
+    const jupiter: JupiterData | null =
+      prefetchedQuote !== undefined
+        ? prefetchedQuote
+          ? {
+              primaryPool: prefetchedQuote.primaryPool,
+              poolAddress: prefetchedQuote.poolAddress,
+              priceImpactPct: prefetchedQuote.priceImpactPct,
+            }
+          : null
+        : await fetchJupiterQuote(mintAddress);
     if (!jupiter) return noLiquidity();
 
     const rating = deriveRating(jupiter.priceImpactPct);

@@ -10,7 +10,8 @@ import {
 import { checkLiquidity, type LiquidityResult } from "./checks/liquidity.js";
 import { checkMetadata, type MetadataResult } from "./checks/metadata.js";
 import { checkTokenAge, type TokenAgeResult } from "./checks/token-age.js";
-import { checkHoneypot, type HoneypotResult } from "./checks/honeypot.js";
+import { analyzeHoneypot, type HoneypotResult } from "./checks/honeypot.js";
+import { fetchRoundTrip, type JupiterRoundTrip } from "./checks/jupiter.js";
 import { computeRiskScore, generateRiskSummary } from "./risk-score.js";
 import { ApiError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
@@ -173,6 +174,8 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
   }
 
   // Step 2: run remaining checks in parallel (fault-isolated)
+  // Jupiter round-trip (2 sequential calls) feeds both honeypot + liquidity,
+  // saving one external HTTP call vs making them independently.
   const fallbackHolders: TopHoldersResult = {
     top_10_percentage: 0,
     top_1_percentage: 0,
@@ -181,20 +184,31 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
     risk: "SAFE",
   };
 
-  const [holders, liquidity, metadata, tokenAge, honeypot] = await Promise.all([
+  const emptyTrip: JupiterRoundTrip = { buyQuote: null, sellQuote: null };
+
+  const [holders, jupiterTrip, metadata, tokenAge] = await Promise.all([
     checkTopHolders(mintAddress, mintData.supplyRaw).catch(
       (err): TopHoldersResult => {
         logger.warn({ err, mintAddress }, "Top holders check failed");
         return fallbackHolders;
       },
     ),
-    checkLiquidity(mintAddress).catch((): LiquidityResult | null => null),
+    fetchRoundTrip(mintAddress).catch((): JupiterRoundTrip => emptyTrip),
     checkMetadata(mintAddress).catch((): MetadataResult | null => null),
     checkTokenAge(mintAddress).catch((): TokenAgeResult | null => null),
-    checkHoneypot(mintAddress, mintData.decimals).catch(
-      (): HoneypotResult | null => null,
-    ),
   ]);
+
+  // Honeypot: pure computation from Jupiter quotes (no I/O)
+  const honeypot: HoneypotResult | null =
+    jupiterTrip.buyQuote || jupiterTrip.sellQuote
+      ? analyzeHoneypot(jupiterTrip.buyQuote, jupiterTrip.sellQuote)
+      : null;
+
+  // Liquidity: use buy quote for pool info + price impact, then LP lock detection (RPC)
+  const liquidity: LiquidityResult | null = await checkLiquidity(
+    mintAddress,
+    jupiterTrip.buyQuote,
+  ).catch((): LiquidityResult | null => null);
 
   // Post-processing: holder note for AMM vault ambiguity
   const holderNote =
