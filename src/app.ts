@@ -5,7 +5,9 @@ import { logger } from "./utils/logger.js";
 import { ApiError } from "./utils/errors.js";
 import { x402Middleware } from "./x402/middleware.js";
 import { checkToken, checkTokenLite } from "./analysis/token-checker.js";
+import { monitorTokens } from "./analysis/monitor.js";
 import { cacheStats } from "./utils/cache.js";
+import { monitorCacheStats } from "./utils/monitor-cache.js";
 import { rateLimiter } from "./utils/rate-limit.js";
 
 export const app = express();
@@ -64,10 +66,11 @@ app.use((req, res, next) => {
 app.get("/health", healthRateLimiter, (_req, res) => {
   res.json({
     status: "ok",
-    version: "0.1.0",
+    version: "0.2.0",
     network: config.solanaNetwork,
     uptime: Math.floor((Date.now() - startTime) / 1000),
     cache: cacheStats(),
+    monitorCache: monitorCacheStats(),
   });
 });
 
@@ -112,6 +115,47 @@ app.get("/v1/check", async (req, res, next) => {
     // Strip internal-only fields before sending
     const { _summary, ...publicResult } = result;
     res.json(publicResult);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 8. Portfolio monitor — gated by x402
+app.get("/v1/monitor", async (req, res, next) => {
+  try {
+    const mintsParam = req.query.mints as string | undefined;
+    if (!mintsParam || mintsParam.trim().length === 0) {
+      throw new ApiError(
+        "INVALID_MINT_ADDRESS",
+        "Missing required query parameter: mints",
+      );
+    }
+
+    const mints = [
+      ...new Set(
+        mintsParam
+          .split(",")
+          .map((m) => m.trim())
+          .filter(Boolean),
+      ),
+    ];
+
+    if (mints.length === 0) {
+      throw new ApiError(
+        "INVALID_MINT_ADDRESS",
+        "No valid mint addresses provided",
+      );
+    }
+
+    if (mints.length > 10) {
+      throw new ApiError(
+        "TOO_MANY_MINTS",
+        `Maximum 10 mints per request, got ${mints.length}`,
+      );
+    }
+
+    const response = await monitorTokens(mints);
+    res.json(response);
   } catch (err) {
     next(err);
   }

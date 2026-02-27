@@ -3,6 +3,7 @@ export type ErrorCode =
   | "TOKEN_NOT_FOUND"
   | "RPC_ERROR"
   | "RATE_LIMITED"
+  | "TOO_MANY_MINTS"
   | "INTERNAL_ERROR";
 
 const STATUS_MAP: Record<ErrorCode, number> = {
@@ -10,6 +11,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   TOKEN_NOT_FOUND: 404,
   RPC_ERROR: 503,
   RATE_LIMITED: 429,
+  TOO_MANY_MINTS: 400,
   INTERNAL_ERROR: 500,
 };
 
