@@ -65,7 +65,7 @@ curl http://localhost:3000/health
 curl -i "http://localhost:3000/v1/check?mint=So11111111111111111111111111111111111111112"
 ```
 
-Should return 402 with `PAYMENT-REQUIRED` header containing price ($0.005 USDC), devnet CAIP-2 network, and your treasury wallet.
+Should return 402 with `PAYMENT-REQUIRED` header containing price ($0.015 USDC), devnet CAIP-2 network, and your treasury wallet.
 
 ### Rate limiting
 
@@ -110,7 +110,7 @@ Same Docker deploy, truly free, but 30s cold starts after 15min idle. Fine for t
 
 ## 4. Test Full x402 Flow (devnet)
 
-End-to-end test: test wallet pays $0.005 devnet USDC → facilitator settles on-chain → server returns token analysis. The `scripts/x402-client.ts` script handles the full 402→sign→retry flow automatically.
+End-to-end test: test wallet pays $0.015 devnet USDC → facilitator settles on-chain → server returns token analysis. The `scripts/x402-client.ts` script handles the full 402→sign→retry flow automatically.
 
 ### 4.1 Generate a test wallet
 
@@ -147,7 +147,7 @@ solana airdrop 2 <YOUR_TEST_ADDRESS> --url devnet
 
 **Devnet USDC** (needed for x402 payments):
 
-Go to [faucet.circle.com](https://faucet.circle.com) → select **Solana** → select **Devnet** → paste the address from §4.1. This deposits devnet USDC (mint: `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`). 1 USDC = 200 test runs at $0.005 each.
+Go to [faucet.circle.com](https://faucet.circle.com) → select **Solana** → select **Devnet** → paste the address from §4.1. This deposits devnet USDC (mint: `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`). 1 USDC = ~66 test runs at $0.015 each.
 
 ### 4.3 Fund treasury wallet with devnet USDC
 
@@ -207,7 +207,7 @@ SVM_PRIVATE_KEY=<YOUR_BASE58_KEYPAIR> SMOKE_URL=https://tokensafe-production.up.
 
 - [ ] Smoke test passes locally (`npm run test:smoke`)
 - [ ] 402 response has `PAYMENT-REQUIRED` header
-- [ ] Payment amount = 5000 ($0.005 USDC, 6 decimals)
+- [ ] Payment amount = 15000 ($0.015 USDC, 6 decimals)
 - [ ] `payTo` in payment requirements matches `TREASURY_WALLET_ADDRESS`
 - [ ] Network = `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` (devnet CAIP-2)
 - [ ] x402 client gets 200 with full analysis JSON after payment
@@ -240,7 +240,7 @@ SVM_PRIVATE_KEY=<YOUR_BASE58_KEYPAIR> SMOKE_URL=https://tokensafe-production.up.
 1. Update Railway env vars: set `SOLANA_NETWORK=mainnet`. Railway auto-redeploys.
 2. Fund your treasury wallet with a tiny amount of **mainnet** USDC (any amount — the ATA needs to exist). Send from Phantom or any wallet.
 3. Re-run the smoke test against Railway to verify the 402 response now shows the mainnet CAIP-2 network (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`) and the mainnet USDC mint.
-4. To test the full payment flow on mainnet, generate a new wallet (`npm run wallet:generate`), fund it with real SOL + real USDC, and run `npm run test:x402`. Cost: $0.005 USDC + ~$0.001 tx fee.
+4. To test the full payment flow on mainnet, generate a new wallet (`npm run wallet:generate`), fund it with real SOL + real USDC, and run `npm run test:x402`. Cost: $0.015 USDC + ~$0.001 tx fee.
 
 ## 6. Agent Discovery Registrations
 

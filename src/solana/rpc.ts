@@ -1,18 +1,86 @@
 import { Connection } from "@solana/web3.js";
 import { config } from "../config.js";
+import { logger } from "../utils/logger.js";
 
-let connection: Connection | null = null;
+let primary: Connection | null = null;
+let backup: Connection | null = null;
+
+let consecutiveFailures = 0;
+let circuitOpenUntil = 0;
+
+const FAILURE_THRESHOLD = 3;
+const CIRCUIT_RESET_MS = 5 * 60 * 1000; // 5 minutes
+
+function makeConnection(url: string): Connection {
+  return new Connection(url, {
+    commitment: "confirmed",
+    fetch: (fetchUrl, init) =>
+      fetch(fetchUrl as string, {
+        ...(init as RequestInit),
+        signal: AbortSignal.timeout(10_000),
+      }),
+  });
+}
 
 export function getConnection(): Connection {
-  if (!connection) {
-    connection = new Connection(config.heliusRpcUrl, {
-      commitment: "confirmed",
-      fetch: (url, init) =>
-        fetch(url as string, {
-          ...(init as RequestInit),
-          signal: AbortSignal.timeout(10_000),
-        }),
-    });
+  // If circuit is open and we have a backup, use it
+  if (backup && Date.now() < circuitOpenUntil) {
+    return backup;
   }
-  return connection;
+
+  // Reset circuit if timer expired
+  if (circuitOpenUntil > 0 && Date.now() >= circuitOpenUntil) {
+    consecutiveFailures = 0;
+    circuitOpenUntil = 0;
+    logger.info("RPC circuit breaker reset — trying primary again");
+  }
+
+  if (!primary) {
+    primary = makeConnection(config.heliusRpcUrl);
+  }
+  return primary;
+}
+
+/**
+ * Call this when an RPC request fails. After FAILURE_THRESHOLD consecutive
+ * failures, the circuit breaker opens and traffic routes to backup.
+ */
+export function reportRpcFailure(): void {
+  consecutiveFailures++;
+  if (consecutiveFailures >= FAILURE_THRESHOLD && backup) {
+    circuitOpenUntil = Date.now() + CIRCUIT_RESET_MS;
+    logger.warn(
+      { consecutiveFailures },
+      "RPC circuit breaker OPEN — switching to backup provider",
+    );
+  }
+}
+
+/** Call on successful RPC to reset the failure counter. */
+export function reportRpcSuccess(): void {
+  if (consecutiveFailures > 0) {
+    consecutiveFailures = 0;
+  }
+}
+
+/** Initialize backup connection if env var is set. */
+export function initBackupRpc(): void {
+  const backupKey = process.env.HELIUS_API_KEY_BACKUP;
+  if (!backupKey) return;
+
+  const backupUrl =
+    config.solanaNetwork === "mainnet"
+      ? `https://mainnet.helius-rpc.com/?api-key=${backupKey}`
+      : `https://devnet.helius-rpc.com/?api-key=${backupKey}`;
+
+  backup = makeConnection(backupUrl);
+  logger.info("Backup RPC provider configured");
+}
+
+/** Reset state for tests. */
+export function resetRpcState(): void {
+  primary = null;
+  backup = null;
+  consecutiveFailures = 0;
+  circuitOpenUntil = 0;
 }

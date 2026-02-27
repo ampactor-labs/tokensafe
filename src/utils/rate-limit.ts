@@ -20,17 +20,21 @@ export function clearRateLimitBuckets(): void {
   buckets.clear();
 }
 
+let limiterCounter = 0;
+
 export function rateLimiter(limit: number) {
   const windowMs = 60_000; // 1 minute
+  const id = String(limiterCounter++);
 
   return (req: Request, res: Response, next: NextFunction): void => {
     const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
+    const key = `${id}:${ip}`;
     const now = Date.now();
 
-    let bucket = buckets.get(ip);
+    let bucket = buckets.get(key);
     if (!bucket || bucket.resetAt <= now) {
       bucket = { count: 0, resetAt: now + windowMs };
-      buckets.set(ip, bucket);
+      buckets.set(key, bucket);
     }
 
     bucket.count++;

@@ -14,6 +14,7 @@ import { checkHoneypot, type HoneypotResult } from "./checks/honeypot.js";
 import { computeRiskScore, generateRiskSummary } from "./risk-score.js";
 import { ApiError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
+import { reportRpcFailure, reportRpcSuccess } from "../solana/rpc.js";
 import {
   getCached,
   setCached,
@@ -160,7 +161,9 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
   let mintData;
   try {
     mintData = await checkMintAccount(mintAddress);
+    reportRpcSuccess();
   } catch (err) {
+    reportRpcFailure();
     if (err instanceof ApiError) throw err;
     throw new ApiError(
       "RPC_ERROR",

@@ -51,8 +51,17 @@ export function getInflight(
   return inflight.get(mint);
 }
 
+const SINGLEFLIGHT_TIMEOUT_MS = 15_000;
+
 export function setInflight(mint: string, p: Promise<TokenCheckResult>): void {
-  inflight.set(mint, p);
+  const timeout = new Promise<TokenCheckResult>((_, reject) =>
+    setTimeout(() => {
+      inflight.delete(mint);
+      reject(new Error("Analysis timed out"));
+    }, SINGLEFLIGHT_TIMEOUT_MS),
+  );
+  const race = Promise.race([p, timeout]);
+  inflight.set(mint, race);
   p.finally(() => inflight.delete(mint));
 }
 

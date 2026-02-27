@@ -14,6 +14,7 @@ export interface ExtensionInfo {
   name: string;
   transfer_fee_bps?: number;
   permanent_delegate?: string | null;
+  transfer_hook_program?: string | null;
 }
 
 export interface MintAccountResult {
@@ -112,6 +113,12 @@ function parseExtensions(data: Buffer): ExtensionInfo[] {
               data.subarray(valueStart + 4, valueStart + 36),
             ).toBase58()
           : null;
+    } else if (typeId === 14 && length >= 68) {
+      // TransferHook: authority(COption<Pubkey>=36) + program_id(Pubkey=32)
+      const programBytes = data.subarray(valueStart + 36, valueStart + 68);
+      const programId = new PublicKey(programBytes);
+      const isZero = programId.equals(PublicKey.default);
+      ext.transfer_hook_program = isZero ? null : programId.toBase58();
     }
 
     extensions.push(ext);

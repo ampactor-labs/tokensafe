@@ -21,16 +21,34 @@ export interface RiskScoreResult {
   risk_level: RiskLevel;
 }
 
+/**
+ * Known freeze authorities that are NOT rug-risk indicators.
+ * e.g. Circle uses freeze authority on USDC for regulatory compliance.
+ * Key: freeze authority pubkey, value: reason it's trusted.
+ */
+const TRUSTED_FREEZE_AUTHORITIES = new Set([
+  // Circle (USDC issuer) — both mainnet and devnet USDC have active freeze authority
+  "7dGbd2QZcCKcTndnHcTL8q7SMVXAkp688JtsGMsNeDDw",
+  // Add more as identified (e.g. other stablecoin issuers)
+]);
+
 export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
   let score = 0;
 
   // Mint/freeze authority
   if (input.mint.mintAuthority !== null) score += 30;
-  if (input.mint.freezeAuthority !== null) score += 25;
+  if (
+    input.mint.freezeAuthority !== null &&
+    !TRUSTED_FREEZE_AUTHORITIES.has(input.mint.freezeAuthority)
+  ) {
+    score += 25;
+  }
 
   // Top holder concentration
   if (input.holders.top_10_percentage > 50) score += 15;
-  if (input.holders.top_1_percentage > 20) score += 10;
+  // Skip single-whale penalty if token has active liquidity — top holder is likely the AMM vault
+  const hasActiveLiquidity = input.liquidity?.has_liquidity === true;
+  if (input.holders.top_1_percentage > 20 && !hasActiveLiquidity) score += 10;
 
   // Liquidity
   if (input.liquidity) {
@@ -58,6 +76,9 @@ export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
       else if (ext.transfer_fee_bps >= 1000) score += 10;
       else if (ext.transfer_fee_bps > 0) score += 5;
     }
+    if (ext.name === "TransferHook" && ext.transfer_hook_program) {
+      score += 15; // Arbitrary code runs on every transfer
+    }
   }
 
   // Honeypot
@@ -80,7 +101,12 @@ export function generateRiskSummary(input: RiskScoreInput): string {
   const flags: string[] = [];
 
   if (input.mint.mintAuthority !== null) flags.push("active mint authority");
-  if (input.mint.freezeAuthority !== null) flags.push("active freeze authority");
+  if (
+    input.mint.freezeAuthority !== null &&
+    !TRUSTED_FREEZE_AUTHORITIES.has(input.mint.freezeAuthority)
+  ) {
+    flags.push("active freeze authority");
+  }
   if (input.holders.top_10_percentage > 50)
     flags.push(`top 10 holders own ${input.holders.top_10_percentage.toFixed(1)}% of supply`);
   if (input.holders.top_1_percentage > 20)
@@ -99,8 +125,18 @@ export function generateRiskSummary(input: RiskScoreInput): string {
       flags.push("permanent delegate set");
     if (ext.name === "TransferFeeConfig" && ext.transfer_fee_bps != null && ext.transfer_fee_bps > 0)
       flags.push(`${(ext.transfer_fee_bps / 100).toFixed(1)}% transfer fee`);
+    if (ext.name === "TransferHook" && ext.transfer_hook_program)
+      flags.push("transfer hook set — arbitrary code runs on every transfer");
   }
   if (input.honeypot && !input.honeypot.can_sell) flags.push("cannot sell (honeypot)");
+  if (
+    input.honeypot?.sell_tax_bps != null &&
+    input.honeypot.sell_tax_bps > 0
+  ) {
+    flags.push(
+      `${(input.honeypot.sell_tax_bps / 100).toFixed(1)}% sell tax`,
+    );
+  }
 
   if (flags.length === 0) return "No risk factors detected";
   return flags.join(", ");

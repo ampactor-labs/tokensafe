@@ -128,11 +128,24 @@ describe("computeRiskScore", () => {
     expect(result.risk_score).toBe(15);
   });
 
-  it("adds 10 for top 1 holder > 20%", () => {
+  it("adds 10 for top 1 holder > 20% when no active liquidity", () => {
     const result = computeRiskScore(
-      makeInput({ holders: makeHolders({ top_1_percentage: 25 }) }),
+      makeInput({
+        holders: makeHolders({ top_1_percentage: 25 }),
+        liquidity: null,
+      }),
     );
     expect(result.risk_score).toBe(10);
+  });
+
+  it("skips top 1 whale penalty when token has active liquidity (AMM vault)", () => {
+    const result = computeRiskScore(
+      makeInput({
+        holders: makeHolders({ top_1_percentage: 25 }),
+        liquidity: makeLiquidity({ has_liquidity: true }),
+      }),
+    );
+    expect(result.risk_score).toBe(0);
   });
 
   // --- Liquidity ---
@@ -268,6 +281,32 @@ describe("computeRiskScore", () => {
     expect(result.risk_score).toBe(0);
   });
 
+  it("adds 15 for TransferHook with program set", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          extensions: [
+            { name: "TransferHook", transfer_hook_program: "SomeProgram111" },
+          ],
+        }),
+      }),
+    );
+    expect(result.risk_score).toBe(15);
+  });
+
+  it("adds 0 for TransferHook without program (null)", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          extensions: [
+            { name: "TransferHook", transfer_hook_program: null },
+          ],
+        }),
+      }),
+    );
+    expect(result.risk_score).toBe(0);
+  });
+
   // --- Honeypot ---
   it("adds 30 for honeypot can't sell", () => {
     const result = computeRiskScore(
@@ -333,6 +372,18 @@ describe("computeRiskScore", () => {
     // 25 (freeze authority)
     expect(result.risk_score).toBe(25);
     expect(result.risk_level).toBe("MODERATE");
+  });
+
+  // --- Freeze authority allowlist ---
+  it("skips freeze authority penalty for trusted authorities (e.g. Circle/USDC)", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          freezeAuthority: "7dGbd2QZcCKcTndnHcTL8q7SMVXAkp688JtsGMsNeDDw",
+        }),
+      }),
+    );
+    expect(result.risk_score).toBe(0);
   });
 });
 
@@ -404,5 +455,38 @@ describe("generateRiskSummary", () => {
       }),
     );
     expect(summary).toContain("cannot sell (honeypot)");
+  });
+
+  it("includes sell tax percentage", () => {
+    const summary = generateRiskSummary(
+      makeInput({
+        honeypot: makeHoneypot({ sell_tax_bps: 1500 }),
+      }),
+    );
+    expect(summary).toContain("15.0% sell tax");
+  });
+
+  it("includes transfer hook warning", () => {
+    const summary = generateRiskSummary(
+      makeInput({
+        mint: makeMint({
+          extensions: [
+            { name: "TransferHook", transfer_hook_program: "SomeProgram111" },
+          ],
+        }),
+      }),
+    );
+    expect(summary).toContain("transfer hook set");
+  });
+
+  it("skips freeze authority flag for trusted authorities", () => {
+    const summary = generateRiskSummary(
+      makeInput({
+        mint: makeMint({
+          freezeAuthority: "7dGbd2QZcCKcTndnHcTL8q7SMVXAkp688JtsGMsNeDDw",
+        }),
+      }),
+    );
+    expect(summary).toBe("No risk factors detected");
   });
 });
