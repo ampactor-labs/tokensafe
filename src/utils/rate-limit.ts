@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
+import { ApiError } from "./errors.js";
 
 interface BucketEntry {
   count: number;
@@ -42,12 +43,11 @@ export function rateLimiter(limit: number) {
     );
 
     if (bucket.count > limit) {
-      res.status(429).json({
-        error: {
-          code: "RATE_LIMITED",
-          message: `Rate limit exceeded. Try again in ${Math.ceil((bucket.resetAt - now) / 1000)}s`,
-        },
-      });
+      const err = new ApiError(
+        "RATE_LIMITED",
+        `Rate limit exceeded. Try again in ${Math.ceil((bucket.resetAt - now) / 1000)}s`,
+      );
+      res.status(err.status).json(err.toJSON());
       return;
     }
 

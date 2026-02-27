@@ -14,14 +14,17 @@ export async function checkTokenAge(
   const mintPubkey = new PublicKey(mintAddress);
 
   try {
-    // Fetch up to 1000 signatures (returned newest-first).
-    // The last entry is the oldest we can see in one call.
-    // For young tokens (<1000 txs) this gives exact creation time.
-    // For older tokens the lower bound is sufficient — if the oldest
-    // signature in the batch is >24h old, age risk = 0 regardless.
-    const sigs = await connection.getSignaturesForAddress(mintPubkey, {
-      limit: 1000,
+    // Fetch up to 10 signatures (returned newest-first). If 10th-oldest sig is >24h, age risk = 0.
+    // For <10 sigs, exact creation time.
+    const sigPromise = connection.getSignaturesForAddress(mintPubkey, {
+      limit: 10,
     });
+    const sigs = await Promise.race([
+      sigPromise,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Token age RPC timeout")), 5000),
+      ),
+    ]);
 
     if (sigs.length === 0) {
       return { token_age_hours: null, created_at: null };

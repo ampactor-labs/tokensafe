@@ -20,7 +20,7 @@ export const x402Middleware = paymentMiddleware(
         price: "$0.005",
       },
       description:
-        "Solana token safety check — mint authority, freeze authority, top holder concentration, risk score",
+        "Solana token safety check — mint authority, freeze authority, top holder concentration, liquidity, honeypot detection, metadata mutability, token age, Token-2022 extension risks, risk score",
     },
   },
   resourceServer,

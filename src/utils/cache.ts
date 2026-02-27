@@ -1,23 +1,80 @@
 import { LRUCache } from "lru-cache";
 import type { TokenCheckResult } from "../analysis/token-checker.js";
+import { ApiError } from "./errors.js";
 
+// === Primary cache (positive results) ===
 const cache = new LRUCache<string, TokenCheckResult>({
   max: 10_000,
   ttl: 5 * 60 * 1000, // 5 minutes
 });
 
+let hits = 0;
+let misses = 0;
+
 export function getCached(mint: string): TokenCheckResult | undefined {
-  return cache.get(mint);
+  const result = cache.get(mint);
+  if (result) {
+    hits++;
+  } else {
+    misses++;
+  }
+  return result;
 }
 
 export function setCached(mint: string, result: TokenCheckResult): void {
   cache.set(mint, result);
 }
 
-export function cacheStats(): { size: number; maxSize: number } {
-  return { size: cache.size, maxSize: 10_000 };
+export function cacheStats(): {
+  size: number;
+  maxSize: number;
+  hits: number;
+  misses: number;
+  hitRate: string;
+} {
+  const total = hits + misses;
+  return {
+    size: cache.size,
+    maxSize: 10_000,
+    hits,
+    misses,
+    hitRate: total > 0 ? `${((hits / total) * 100).toFixed(1)}%` : "N/A",
+  };
 }
 
+// === Singleflight (in-flight dedup) ===
+const inflight = new Map<string, Promise<TokenCheckResult>>();
+
+export function getInflight(
+  mint: string,
+): Promise<TokenCheckResult> | undefined {
+  return inflight.get(mint);
+}
+
+export function setInflight(mint: string, p: Promise<TokenCheckResult>): void {
+  inflight.set(mint, p);
+  p.finally(() => inflight.delete(mint));
+}
+
+// === Negative cache (30s error cache) ===
+const negativeCache = new LRUCache<string, ApiError>({
+  max: 1_000,
+  ttl: 30_000,
+});
+
+export function getNegativeCached(mint: string): ApiError | undefined {
+  return negativeCache.get(mint);
+}
+
+export function setNegativeCached(mint: string, err: ApiError): void {
+  negativeCache.set(mint, err);
+}
+
+// === Clear all caches (for tests) ===
 export function clearCache(): void {
   cache.clear();
+  inflight.clear();
+  negativeCache.clear();
+  hits = 0;
+  misses = 0;
 }

@@ -41,10 +41,12 @@ function makeResult(overrides?: Partial<TokenCheckResult>): CheckTokenResponse {
         top_10_percentage: 12.5,
         top_1_percentage: 3.2,
         holder_count_estimate: 50000,
+        note: null,
         risk: "SAFE",
       },
       liquidity: null,
       metadata: null,
+      honeypot: null,
       token_age_hours: 8760,
       is_token_2022: false,
       token_2022_extensions: null,
@@ -67,7 +69,13 @@ describe("GET /health", () => {
     expect(res.body).toMatchObject({
       status: "ok",
       version: "0.1.0",
-      cache: { size: expect.any(Number), maxSize: 10000 },
+      cache: {
+        size: expect.any(Number),
+        maxSize: 10000,
+        hits: expect.any(Number),
+        misses: expect.any(Number),
+        hitRate: expect.any(String),
+      },
     });
     expect(res.body).toHaveProperty("network");
     expect(res.body).toHaveProperty("uptime");

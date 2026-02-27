@@ -30,7 +30,12 @@ export async function checkMetadata(
     METAPLEX_PROGRAM_ID,
   );
 
-  const accountInfo = await connection.getAccountInfo(metadataPDA);
+  const accountInfo = await Promise.race([
+    connection.getAccountInfo(metadataPDA),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Metadata RPC timeout")), 5000),
+    ),
+  ]);
   if (!accountInfo) {
     return null; // No Metaplex metadata — common for devnet tokens
   }
@@ -96,6 +101,9 @@ function parseMetadataAccount(data: Buffer): ParsedMetadata {
 
 function readBorshString(data: Buffer, offset: number): [string, number] {
   const len = data.readUInt32LE(offset);
+  if (offset + 4 + len > data.length || len > 10_000) {
+    throw new Error("Metadata string length out of bounds");
+  }
   const str = data.subarray(offset + 4, offset + 4 + len).toString("utf8");
   return [str, offset + 4 + len];
 }

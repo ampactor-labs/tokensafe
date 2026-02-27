@@ -8,6 +8,7 @@ import type { TopHoldersResult } from "../src/analysis/checks/top-holders.js";
 import type { LiquidityResult } from "../src/analysis/checks/liquidity.js";
 import type { MetadataResult } from "../src/analysis/checks/metadata.js";
 import type { TokenAgeResult } from "../src/analysis/checks/token-age.js";
+import type { HoneypotResult } from "../src/analysis/checks/honeypot.js";
 
 function makeMint(
   overrides: Partial<MintAccountResult> = {},
@@ -30,6 +31,7 @@ function makeHolders(
     top_10_percentage: 10,
     top_1_percentage: 2,
     holder_count_estimate: null,
+    note: null,
     risk: "SAFE",
     ...overrides,
   };
@@ -69,6 +71,15 @@ function makeAge(overrides: Partial<TokenAgeResult> = {}): TokenAgeResult {
   };
 }
 
+function makeHoneypot(overrides: Partial<HoneypotResult> = {}): HoneypotResult {
+  return {
+    can_sell: true,
+    sell_tax_bps: null,
+    risk: "SAFE",
+    ...overrides,
+  };
+}
+
 function makeInput(overrides: Partial<RiskScoreInput> = {}): RiskScoreInput {
   return {
     mint: makeMint(),
@@ -76,6 +87,7 @@ function makeInput(overrides: Partial<RiskScoreInput> = {}): RiskScoreInput {
     liquidity: makeLiquidity(),
     metadata: makeMetadata(),
     tokenAge: makeAge(),
+    honeypot: null,
     ...overrides,
   };
 }
@@ -96,12 +108,12 @@ describe("computeRiskScore", () => {
     expect(result.risk_level).toBe("MODERATE");
   });
 
-  it("adds 20 for active freeze authority", () => {
+  it("adds 25 for active freeze authority", () => {
     const result = computeRiskScore(
       makeInput({ mint: makeMint({ freezeAuthority: "SomeAuthority111" }) }),
     );
-    expect(result.risk_score).toBe(20);
-    expect(result.risk_level).toBe("LOW");
+    expect(result.risk_score).toBe(25);
+    expect(result.risk_level).toBe("MODERATE");
   });
 
   // --- Holder concentration ---
@@ -120,11 +132,11 @@ describe("computeRiskScore", () => {
   });
 
   // --- Liquidity ---
-  it("adds 25 for no liquidity", () => {
+  it("adds 30 for no liquidity", () => {
     const result = computeRiskScore(
       makeInput({ liquidity: makeLiquidity({ has_liquidity: false }) }),
     );
-    expect(result.risk_score).toBe(25);
+    expect(result.risk_score).toBe(30);
     expect(result.risk_level).toBe("MODERATE");
   });
 
@@ -134,11 +146,11 @@ describe("computeRiskScore", () => {
   });
 
   // --- Metadata ---
-  it("adds 5 for mutable metadata", () => {
+  it("adds 10 for mutable metadata", () => {
     const result = computeRiskScore(
       makeInput({ metadata: makeMetadata({ mutable: true }) }),
     );
-    expect(result.risk_score).toBe(5);
+    expect(result.risk_score).toBe(10);
   });
 
   it("skips metadata scoring when check returned null", () => {
@@ -173,6 +185,88 @@ describe("computeRiskScore", () => {
     expect(result.risk_score).toBe(0);
   });
 
+  // --- Token-2022 extensions ---
+  it("adds 30 for PermanentDelegate with delegate set", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          extensions: [
+            { name: "PermanentDelegate", permanent_delegate: "SomePubkey" },
+          ],
+        }),
+      }),
+    );
+    expect(result.risk_score).toBe(30);
+  });
+
+  it("adds 20 for TransferFee > 50%", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          extensions: [{ name: "TransferFeeConfig", transfer_fee_bps: 6000 }],
+        }),
+      }),
+    );
+    expect(result.risk_score).toBe(20);
+  });
+
+  it("adds 10 for TransferFee 10-50%", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          extensions: [{ name: "TransferFeeConfig", transfer_fee_bps: 2000 }],
+        }),
+      }),
+    );
+    expect(result.risk_score).toBe(10);
+  });
+
+  it("adds 5 for TransferFee > 0%", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          extensions: [{ name: "TransferFeeConfig", transfer_fee_bps: 100 }],
+        }),
+      }),
+    );
+    expect(result.risk_score).toBe(5);
+  });
+
+  it("adds 0 for TransferFee = 0", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          extensions: [{ name: "TransferFeeConfig", transfer_fee_bps: 0 }],
+        }),
+      }),
+    );
+    expect(result.risk_score).toBe(0);
+  });
+
+  // --- Honeypot ---
+  it("adds 30 for honeypot can't sell", () => {
+    const result = computeRiskScore(
+      makeInput({
+        honeypot: makeHoneypot({ can_sell: false, risk: "DANGEROUS" }),
+      }),
+    );
+    expect(result.risk_score).toBe(30);
+  });
+
+  it("adds 15 for sell tax > 10%", () => {
+    const result = computeRiskScore(
+      makeInput({
+        honeypot: makeHoneypot({ sell_tax_bps: 2000 }),
+      }),
+    );
+    expect(result.risk_score).toBe(15);
+  });
+
+  it("skips honeypot scoring when null", () => {
+    const result = computeRiskScore(makeInput({ honeypot: null }));
+    expect(result.risk_score).toBe(0);
+  });
+
   // --- Combined ---
   it("sums all flags to max when everything is bad", () => {
     const result = computeRiskScore(
@@ -187,7 +281,7 @@ describe("computeRiskScore", () => {
         tokenAge: makeAge({ token_age_hours: 0.1 }),
       }),
     );
-    // 30 + 20 + 15 + 10 + 25 + 5 + 10 = 115 → capped at 100
+    // 30 + 25 + 15 + 10 + 30 + 10 + 10 = 130 → capped at 100
     expect(result.risk_score).toBe(100);
     expect(result.risk_level).toBe("EXTREME");
   });
@@ -195,8 +289,12 @@ describe("computeRiskScore", () => {
   // --- Level boundaries ---
   it("boundary: score 20 is LOW", () => {
     const result = computeRiskScore(
-      makeInput({ mint: makeMint({ freezeAuthority: "A" }) }),
+      makeInput({
+        holders: makeHolders({ top_10_percentage: 55 }),
+        tokenAge: makeAge({ token_age_hours: 12 }),
+      }),
     );
+    // 15 (top10>50%) + 5 (age<24h) = 20
     expect(result.risk_score).toBe(20);
     expect(result.risk_level).toBe("LOW");
   });
@@ -205,9 +303,9 @@ describe("computeRiskScore", () => {
     const result = computeRiskScore(
       makeInput({
         mint: makeMint({ freezeAuthority: "A" }),
-        metadata: makeMetadata({ mutable: true }),
       }),
     );
+    // 25 (freeze authority)
     expect(result.risk_score).toBe(25);
     expect(result.risk_level).toBe("MODERATE");
   });

@@ -2,12 +2,14 @@ export type ErrorCode =
   | "INVALID_MINT_ADDRESS"
   | "TOKEN_NOT_FOUND"
   | "RPC_ERROR"
+  | "RATE_LIMITED"
   | "INTERNAL_ERROR";
 
 const STATUS_MAP: Record<ErrorCode, number> = {
   INVALID_MINT_ADDRESS: 400,
   TOKEN_NOT_FOUND: 404,
   RPC_ERROR: 503,
+  RATE_LIMITED: 429,
   INTERNAL_ERROR: 500,
 };
 

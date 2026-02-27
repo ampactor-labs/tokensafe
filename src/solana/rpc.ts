@@ -7,6 +7,11 @@ export function getConnection(): Connection {
   if (!connection) {
     connection = new Connection(config.heliusRpcUrl, {
       commitment: "confirmed",
+      fetch: (url, init) =>
+        fetch(url as string, {
+          ...(init as RequestInit),
+          signal: AbortSignal.timeout(10_000),
+        }),
     });
   }
   return connection;

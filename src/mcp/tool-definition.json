@@ -1,6 +1,6 @@
 {
   "name": "solana_token_safety_check",
-  "description": "Check if a Solana SPL token is safe to trade. Analyzes mint authority, freeze authority, LP lock status, top holder concentration, metadata mutability, and token age. Returns a composite risk score 0-100 and per-check risk assessments. Accepts any Solana token mint address. Useful before buying, swapping, or providing liquidity to any Solana token.",
+  "description": "Check if a Solana SPL token is safe to trade. Analyzes mint authority, freeze authority, top holder concentration, liquidity availability, sell-side honeypot detection, metadata mutability, token age, and Token-2022 extension risks (transfer fees, permanent delegate). Returns a composite risk score 0-100 and per-check risk assessments. Accepts any Solana token mint address. Useful before buying, swapping, or providing liquidity to any Solana token.",
   "inputSchema": {
     "type": "object",
     "properties": {

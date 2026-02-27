@@ -10,13 +10,19 @@ const TOKEN_2022_PROGRAM = new PublicKey(
   "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
 );
 
+export interface ExtensionInfo {
+  name: string;
+  transfer_fee_bps?: number;
+  permanent_delegate?: string | null;
+}
+
 export interface MintAccountResult {
   mintAuthority: string | null;
   freezeAuthority: string | null;
   supplyRaw: bigint;
   decimals: number;
   isToken2022: boolean;
-  extensions: string[];
+  extensions: ExtensionInfo[];
 }
 
 export async function checkMintAccount(
@@ -40,7 +46,7 @@ export async function checkMintAccount(
 
   const mint = await getMint(connection, mintPubkey, "confirmed", programId);
 
-  const extensions = isToken2022 ? parseExtensionTypes(accountInfo.data) : [];
+  const extensions = isToken2022 ? parseExtensions(accountInfo.data) : [];
 
   return {
     mintAuthority: mint.mintAuthority?.toBase58() ?? null,
@@ -72,27 +78,43 @@ const EXTENSION_NAMES: Record<number, string> = {
 
 // SPL Token mint is 82 bytes. Token-2022 appends: account_type(1) + padding(1-3) + TLV data
 // TLV entries: type(u16 LE) + length(u16 LE) + value(length bytes)
-function parseExtensionTypes(data: Buffer): string[] {
-  // Token-2022 mint base size = 82, then 1 byte account type, then TLV
-  const TLV_START = 83 + (83 % 2 === 0 ? 0 : 1); // align to even offset — actually 165 for standard
-  // The actual offset: 82 bytes mint data + variable padding. The account type byte is at 82.
-  // TLV data starts after the account type byte, at offset 83 (some implementations add padding).
-  // In practice, scan from offset 82 looking for the account type marker, then parse TLV.
-  let offset = 83;
+function parseExtensions(data: Buffer): ExtensionInfo[] {
+  // Mint base: 82 bytes + account_type: 1 byte = TLV at 83
+  const MINT_TLV_START = 83;
+  let offset = MINT_TLV_START;
   if (offset >= data.length) return [];
 
-  const extensions: string[] = [];
+  const extensions: ExtensionInfo[] = [];
   while (offset + 4 <= data.length) {
     const typeId = data.readUInt16LE(offset);
     const length = data.readUInt16LE(offset + 2);
-    offset += 4;
+    const valueStart = offset + 4;
+    offset = valueStart + length;
 
     if (typeId === 0 && length === 0) break; // end of TLV
 
     const name = EXTENSION_NAMES[typeId];
-    if (name) extensions.push(name);
+    if (!name) continue;
 
-    offset += length;
+    const ext: ExtensionInfo = { name };
+
+    if (typeId === 1 && length >= 108) {
+      // TransferFeeConfig: read newer_transfer_fee.transfer_fee_basis_points
+      // Layout: authority(COption<Pubkey>=36) + withdraw_authority(36) + older_transfer_fee(TransferFee=18)
+      //       + newer.epoch(u64=8) + newer.maximum_fee(u64=8) + newer.basis_points(u16=2) = offset 106
+      ext.transfer_fee_bps = data.readUInt16LE(valueStart + 106);
+    } else if (typeId === 12 && length >= 36) {
+      // PermanentDelegate: COption<Pubkey>
+      const tag = data.readUInt32LE(valueStart);
+      ext.permanent_delegate =
+        tag === 1
+          ? new PublicKey(
+              data.subarray(valueStart + 4, valueStart + 36),
+            ).toBase58()
+          : null;
+    }
+
+    extensions.push(ext);
   }
 
   return extensions;

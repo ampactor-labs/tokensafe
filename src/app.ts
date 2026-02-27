@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import express from "express";
 import { config } from "./config.js";
 import { logger } from "./utils/logger.js";
@@ -8,11 +9,21 @@ import { cacheStats } from "./utils/cache.js";
 import { rateLimiter } from "./utils/rate-limit.js";
 
 export const app = express();
+app.set("trust proxy", 1);
 const startTime = Date.now();
 
 const rateLimit = parseInt(process.env.RATE_LIMIT_PER_MINUTE || "60", 10);
+const healthRateLimit = rateLimiter(rateLimit);
+const paidRateLimit = rateLimiter(rateLimit);
 
-// 1. Latency tracking — top of stack
+// 1. Request ID — top of stack
+app.use((req, res, next) => {
+  (req as any).id = crypto.randomUUID();
+  res.setHeader("X-Request-ID", (req as any).id);
+  next();
+});
+
+// 2. Latency tracking
 app.use((req, res, next) => {
   const start = Date.now();
 
@@ -34,6 +45,8 @@ app.use((req, res, next) => {
       {
         method: req.method,
         path: req.path,
+        query: req.query,
+        requestId: (req as any).id,
         status: res.statusCode,
         latencyMs,
         ip: req.ip,
@@ -45,11 +58,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// 2. Rate limiter — before x402 to reject abusers early
-app.use(rateLimiter(rateLimit));
-
-// 3. Health endpoint — free, not gated by x402
-app.get("/health", (_req, res) => {
+// 3. Health endpoint — free, separate rate limiter
+app.get("/health", healthRateLimit, (_req, res) => {
   res.json({
     status: "ok",
     version: "0.1.0",
@@ -62,7 +72,10 @@ app.get("/health", (_req, res) => {
 // 4. x402 payment gate for paid routes
 app.use(x402Middleware);
 
-// 5. Token safety check — gated by x402
+// 5. Rate limiter for paid routes (independent bucket from health)
+app.use(paidRateLimit);
+
+// 6. Token safety check — gated by x402
 app.get("/v1/check", async (req, res, next) => {
   try {
     const mint = req.query.mint as string | undefined;

@@ -5,6 +5,7 @@ export interface TopHoldersResult {
   top_10_percentage: number;
   top_1_percentage: number;
   holder_count_estimate: number | null;
+  note: string | null;
   risk: "SAFE" | "HIGH" | "CRITICAL";
 }
 
@@ -24,18 +25,21 @@ export async function checkTopHolders(
       top_10_percentage: 0,
       top_1_percentage: 0,
       holder_count_estimate: 0,
+      note: null,
       risk: "SAFE",
     };
   }
 
-  // Use BigInt arithmetic for precision, convert to percentage at the end
-  const totalSupply = Number(totalSupplyRaw);
+  // Scaled BigInt arithmetic: compute basis points (0-10000) then convert to percentage
   const top10 = accounts.slice(0, 10);
-  const top10Sum = top10.reduce((sum, a) => sum + Number(BigInt(a.amount)), 0);
-  const top1Amount = Number(BigInt(accounts[0].amount));
+  const top10Bps = top10.reduce(
+    (sum, a) => sum + (BigInt(a.amount) * 10000n) / totalSupplyRaw,
+    0n,
+  );
+  const top1Bps = (BigInt(accounts[0].amount) * 10000n) / totalSupplyRaw;
 
-  const top10Pct = (top10Sum / totalSupply) * 100;
-  const top1Pct = (top1Amount / totalSupply) * 100;
+  const top10Pct = Math.round(Number(top10Bps)) / 100;
+  const top1Pct = Math.round(Number(top1Bps)) / 100;
 
   // If fewer than 20 accounts returned, that's the actual holder count
   const holderCountEstimate = accounts.length < 20 ? accounts.length : null;
@@ -48,9 +52,10 @@ export async function checkTopHolders(
   }
 
   return {
-    top_10_percentage: Math.round(top10Pct * 100) / 100,
-    top_1_percentage: Math.round(top1Pct * 100) / 100,
+    top_10_percentage: top10Pct,
+    top_1_percentage: top1Pct,
     holder_count_estimate: holderCountEstimate,
+    note: null,
     risk,
   };
 }

@@ -1,12 +1,27 @@
 import { PublicKey } from "@solana/web3.js";
-import { checkMintAccount } from "./checks/mint-authority.js";
-import { checkTopHolders } from "./checks/top-holders.js";
+import {
+  checkMintAccount,
+  type ExtensionInfo,
+} from "./checks/mint-authority.js";
+import {
+  checkTopHolders,
+  type TopHoldersResult,
+} from "./checks/top-holders.js";
 import { checkLiquidity, type LiquidityResult } from "./checks/liquidity.js";
 import { checkMetadata, type MetadataResult } from "./checks/metadata.js";
 import { checkTokenAge, type TokenAgeResult } from "./checks/token-age.js";
+import { checkHoneypot, type HoneypotResult } from "./checks/honeypot.js";
 import { computeRiskScore } from "./risk-score.js";
 import { ApiError } from "../utils/errors.js";
-import { getCached, setCached } from "../utils/cache.js";
+import { logger } from "../utils/logger.js";
+import {
+  getCached,
+  setCached,
+  getInflight,
+  setInflight,
+  getNegativeCached,
+  setNegativeCached,
+} from "../utils/cache.js";
 
 export interface TokenCheckResult {
   mint: string;
@@ -35,18 +50,20 @@ export interface TokenCheckResult {
       top_10_percentage: number;
       top_1_percentage: number;
       holder_count_estimate: number | null;
+      note: string | null;
       risk: "SAFE" | "HIGH" | "CRITICAL";
     };
     liquidity: LiquidityResult | null;
     metadata: {
       mutable: boolean;
       has_uri: boolean;
-      uri_accessible: boolean;
+      uri: string | null;
       risk: "SAFE" | "WARNING";
     } | null;
+    honeypot: HoneypotResult | null;
     token_age_hours: number | null;
     is_token_2022: boolean;
-    token_2022_extensions: string[] | null;
+    token_2022_extensions: ExtensionInfo[] | null;
   };
 }
 
@@ -77,7 +94,38 @@ export async function checkToken(
     };
   }
 
-  // Step 1: mint account data (needed for supply → top holders)
+  // Negative cache — recently-failed mints
+  const negErr = getNegativeCached(mintAddress);
+  if (negErr) throw negErr;
+
+  // Singleflight — deduplicate concurrent requests for same mint
+  const existing = getInflight(mintAddress);
+  if (existing) {
+    const result = await existing;
+    return {
+      result: { ...result, cached_at: result.checked_at },
+      fromCache: true,
+    };
+  }
+
+  // Wrap analysis in a promise for singleflight
+  const analysisPromise = runAnalysis(mintAddress);
+  setInflight(mintAddress, analysisPromise);
+
+  try {
+    const result = await analysisPromise;
+    setCached(mintAddress, result);
+    return { result, fromCache: false };
+  } catch (err) {
+    if (err instanceof ApiError) {
+      setNegativeCached(mintAddress, err);
+    }
+    throw err;
+  }
+}
+
+async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
+  // Step 1: mint account data (needed for supply → top holders, decimals → honeypot)
   let mintData;
   try {
     mintData = await checkMintAccount(mintAddress);
@@ -90,13 +138,35 @@ export async function checkToken(
     );
   }
 
-  // Step 2: run remaining checks in parallel
-  const [holders, liquidity, metadata, tokenAge] = await Promise.all([
-    checkTopHolders(mintAddress, mintData.supplyRaw),
+  // Step 2: run remaining checks in parallel (fault-isolated)
+  const fallbackHolders: TopHoldersResult = {
+    top_10_percentage: 0,
+    top_1_percentage: 0,
+    holder_count_estimate: null,
+    note: null,
+    risk: "SAFE",
+  };
+
+  const [holders, liquidity, metadata, tokenAge, honeypot] = await Promise.all([
+    checkTopHolders(mintAddress, mintData.supplyRaw).catch(
+      (err): TopHoldersResult => {
+        logger.warn({ err, mintAddress }, "Top holders check failed");
+        return fallbackHolders;
+      },
+    ),
     checkLiquidity(mintAddress).catch((): LiquidityResult | null => null),
     checkMetadata(mintAddress).catch((): MetadataResult | null => null),
     checkTokenAge(mintAddress).catch((): TokenAgeResult | null => null),
+    checkHoneypot(mintAddress, mintData.decimals).catch(
+      (): HoneypotResult | null => null,
+    ),
   ]);
+
+  // Post-processing: holder note for AMM vault ambiguity
+  const holderNote =
+    liquidity?.has_liquidity && holders.top_1_percentage > 20
+      ? "Top holder may be an AMM vault (token has active liquidity)"
+      : null;
 
   const { risk_score, risk_level } = computeRiskScore({
     mint: mintData,
@@ -104,9 +174,10 @@ export async function checkToken(
     liquidity,
     metadata,
     tokenAge,
+    honeypot,
   });
 
-  const result: TokenCheckResult = {
+  return {
     mint: mintAddress,
     name: metadata?.name ?? null,
     symbol: metadata?.symbol ?? null,
@@ -129,23 +200,21 @@ export async function checkToken(
         total: mintData.supplyRaw.toString(),
         decimals: mintData.decimals,
       },
-      top_holders: holders,
+      top_holders: { ...holders, note: holderNote },
       liquidity,
       metadata: metadata
         ? {
             mutable: metadata.mutable,
             has_uri: metadata.has_uri,
-            uri_accessible: metadata.has_uri, // v1: URI existence = accessibility
+            uri: metadata.uri,
             risk: metadata.risk,
           }
         : null,
+      honeypot,
       token_age_hours: tokenAge?.token_age_hours ?? null,
       is_token_2022: mintData.isToken2022,
       token_2022_extensions:
         mintData.extensions.length > 0 ? mintData.extensions : null,
     },
   };
-
-  setCached(mintAddress, result);
-  return { result, fromCache: false };
 }
