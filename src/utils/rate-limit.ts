@@ -15,6 +15,10 @@ setInterval(() => {
   }
 }, 60_000).unref();
 
+export function clearRateLimitBuckets(): void {
+  buckets.clear();
+}
+
 export function rateLimiter(limit: number) {
   const windowMs = 60_000; // 1 minute
 

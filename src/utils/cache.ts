@@ -17,3 +17,7 @@ export function setCached(mint: string, result: TokenCheckResult): void {
 export function cacheStats(): { size: number; maxSize: number } {
   return { size: cache.size, maxSize: 10_000 };
 }
+
+export function clearCache(): void {
+  cache.clear();
+}
