@@ -215,6 +215,14 @@ describe("GET /v1/check/lite", () => {
     expect(res.body.error.code).toBe("INVALID_MINT_ADDRESS");
   });
 
+  it("returns 400 for invalid base58 mint without calling analysis", async () => {
+    const res = await request(app).get("/v1/check/lite?mint=not-a-real-mint!!!");
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_MINT_ADDRESS");
+    // The key assertion: checkTokenLite should never be called for garbage input
+    expect(mockCheckTokenLite).not.toHaveBeenCalled();
+  });
+
   it("is rate limited more tightly than paid endpoint", async () => {
     mockCheckTokenLite.mockResolvedValue(makeLiteResult());
     // LITE_RATE_LIMIT_PER_MINUTE defaults to 10 in test

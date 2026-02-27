@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import express from "express";
+import { PublicKey } from "@solana/web3.js";
 import { config } from "./config.js";
 import { logger } from "./utils/logger.js";
 import { ApiError } from "./utils/errors.js";
@@ -82,6 +83,16 @@ app.get("/v1/check/lite", liteRateLimiter, async (req, res, next) => {
       throw new ApiError(
         "INVALID_MINT_ADDRESS",
         "Missing required query parameter: mint",
+      );
+    }
+
+    // Validate base58 early so garbage requests never touch the analysis pipeline
+    try {
+      new PublicKey(mint);
+    } catch {
+      throw new ApiError(
+        "INVALID_MINT_ADDRESS",
+        `Invalid Solana mint address: ${mint}`,
       );
     }
 

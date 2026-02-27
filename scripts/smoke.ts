@@ -47,6 +47,10 @@ async function main() {
     assert(typeof body.network === "string", "missing network");
     assert(typeof body.uptime === "number", "missing uptime");
     assert(typeof body.cache?.size === "number", "missing cache.size");
+    assert(
+      typeof body.monitorCache?.size === "number",
+      "missing monitorCache.size",
+    );
   });
 
   await check("X-Response-Time header present", async () => {
@@ -74,11 +78,60 @@ async function main() {
     );
   });
 
+  // --- Lite endpoint (free) ---
+  console.log("\nLite endpoint:");
+
+  await check("GET /v1/check/lite → 200 with risk score", async () => {
+    const res = await fetch(`${BASE}/v1/check/lite?mint=${WSOL}`);
+    assert(res.status === 200, `expected 200, got ${res.status}`);
+    const body = await res.json();
+    assert(body.mint === WSOL, `expected mint=${WSOL}, got ${body.mint}`);
+    assert(typeof body.risk_score === "number", "missing risk_score");
+    assert(typeof body.risk_level === "string", "missing risk_level");
+    assert(typeof body.summary === "string", "missing summary");
+    assert(typeof body.full_report === "string", "missing full_report");
+    assert(
+      !body.checks,
+      "lite response should NOT include checks (that's the paid endpoint)",
+    );
+  });
+
+  await check("GET /v1/check/lite with bad mint → 400", async () => {
+    const res = await fetch(`${BASE}/v1/check/lite?mint=not-a-real-mint`);
+    assert(res.status === 400, `expected 400, got ${res.status}`);
+    const body = await res.json();
+    assert(
+      body.error?.code === "INVALID_MINT_ADDRESS",
+      `expected INVALID_MINT_ADDRESS, got ${body.error?.code}`,
+    );
+  });
+
+  await check("GET /v1/check/lite without mint → 400", async () => {
+    const res = await fetch(`${BASE}/v1/check/lite`);
+    assert(res.status === 400, `expected 400, got ${res.status}`);
+  });
+
+  await check("X-Cache header present on lite", async () => {
+    const res = await fetch(`${BASE}/v1/check/lite?mint=${WSOL}`);
+    const cache = res.headers.get("x-cache");
+    assert(
+      cache === "HIT" || cache === "MISS",
+      `expected HIT or MISS, got ${cache}`,
+    );
+  });
+
   // --- x402 gate ---
   console.log("\nx402 payment gate:");
 
   await check("GET /v1/check → 402 with PAYMENT-REQUIRED header", async () => {
     const res = await fetch(`${BASE}/v1/check?mint=${WSOL}`);
+    assert(res.status === 402, `expected 402, got ${res.status}`);
+    const pr = res.headers.get("payment-required");
+    assert(pr !== null && pr.length > 0, "missing PAYMENT-REQUIRED header");
+  });
+
+  await check("GET /v1/monitor → 402 with PAYMENT-REQUIRED header", async () => {
+    const res = await fetch(`${BASE}/v1/monitor?mints=${WSOL}`);
     assert(res.status === 402, `expected 402, got ${res.status}`);
     const pr = res.headers.get("payment-required");
     assert(pr !== null && pr.length > 0, "missing PAYMENT-REQUIRED header");
