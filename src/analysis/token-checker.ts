@@ -6,12 +6,14 @@ import { checkMetadata, type MetadataResult } from "./checks/metadata.js";
 import { checkTokenAge, type TokenAgeResult } from "./checks/token-age.js";
 import { computeRiskScore } from "./risk-score.js";
 import { ApiError } from "../utils/errors.js";
+import { getCached, setCached } from "../utils/cache.js";
 
 export interface TokenCheckResult {
   mint: string;
   name: string | null;
   symbol: string | null;
   checked_at: string;
+  cached_at: string | null;
   risk_score: number;
   risk_level: string;
   checks: {
@@ -48,9 +50,14 @@ export interface TokenCheckResult {
   };
 }
 
+export interface CheckTokenResponse {
+  result: TokenCheckResult;
+  fromCache: boolean;
+}
+
 export async function checkToken(
   mintAddress: string,
-): Promise<TokenCheckResult> {
+): Promise<CheckTokenResponse> {
   // Validate base58
   try {
     new PublicKey(mintAddress);
@@ -61,8 +68,27 @@ export async function checkToken(
     );
   }
 
+  // Cache lookup
+  const cached = getCached(mintAddress);
+  if (cached) {
+    return {
+      result: { ...cached, cached_at: cached.checked_at },
+      fromCache: true,
+    };
+  }
+
   // Step 1: mint account data (needed for supply → top holders)
-  const mintData = await checkMintAccount(mintAddress);
+  let mintData;
+  try {
+    mintData = await checkMintAccount(mintAddress);
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(
+      "RPC_ERROR",
+      "Failed to fetch mint account from RPC",
+      (err as Error).message,
+    );
+  }
 
   // Step 2: run remaining checks in parallel
   const [holders, liquidity, metadata, tokenAge] = await Promise.all([
@@ -80,11 +106,12 @@ export async function checkToken(
     tokenAge,
   });
 
-  return {
+  const result: TokenCheckResult = {
     mint: mintAddress,
     name: metadata?.name ?? null,
     symbol: metadata?.symbol ?? null,
     checked_at: new Date().toISOString(),
+    cached_at: null,
     risk_score,
     risk_level,
     checks: {
@@ -118,4 +145,7 @@ export async function checkToken(
         mintData.extensions.length > 0 ? mintData.extensions : null,
     },
   };
+
+  setCached(mintAddress, result);
+  return { result, fromCache: false };
 }
