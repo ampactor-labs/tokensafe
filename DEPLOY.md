@@ -76,9 +76,8 @@ curl -sI http://localhost:3000/health | grep -i x-ratelimit
 | `HELIUS_API_KEY` | Your Helius key |
 | `SOLANA_NETWORK` | `devnet` |
 | `NODE_ENV` | `production` |
-| `PORT` | `3000` |
 
-Leave `FACILITATOR_URL` unset — default is correct.
+Railway injects `PORT` automatically — don't set it manually. `FACILITATOR_URL` and `RATE_LIMIT_PER_MINUTE` have sensible defaults, leave unset unless you need to override.
 
 4. Settings → Networking → Generate Domain.
 5. Verify:
