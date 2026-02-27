@@ -17,7 +17,7 @@ export const x402Middleware = paymentMiddleware(
         scheme: "exact",
         network: config.networkCaip2,
         payTo: config.treasuryWallet,
-        price: "$0.005",
+        price: "$0.015",
       },
       description:
         "Solana token safety check — mint authority, freeze authority, top holder concentration, liquidity, honeypot detection, metadata mutability, token age, Token-2022 extension risks, risk score",

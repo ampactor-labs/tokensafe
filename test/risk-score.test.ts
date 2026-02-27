@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   computeRiskScore,
+  generateRiskSummary,
   type RiskScoreInput,
 } from "../src/analysis/risk-score.js";
 import type { MintAccountResult } from "../src/analysis/checks/mint-authority.js";
@@ -308,5 +309,62 @@ describe("computeRiskScore", () => {
     // 25 (freeze authority)
     expect(result.risk_score).toBe(25);
     expect(result.risk_level).toBe("MODERATE");
+  });
+});
+
+describe("generateRiskSummary", () => {
+  it("returns 'No risk factors detected' when everything is safe", () => {
+    const summary = generateRiskSummary(makeInput());
+    expect(summary).toBe("No risk factors detected");
+  });
+
+  it("lists active mint authority", () => {
+    const summary = generateRiskSummary(
+      makeInput({ mint: makeMint({ mintAuthority: "A" }) }),
+    );
+    expect(summary).toContain("active mint authority");
+  });
+
+  it("lists multiple flags comma-separated", () => {
+    const summary = generateRiskSummary(
+      makeInput({
+        mint: makeMint({ mintAuthority: "A", freezeAuthority: "B" }),
+        liquidity: makeLiquidity({ has_liquidity: false }),
+      }),
+    );
+    expect(summary).toContain("active mint authority");
+    expect(summary).toContain("active freeze authority");
+    expect(summary).toContain("no liquidity detected");
+    expect(summary.split(", ").length).toBe(3);
+  });
+
+  it("includes holder percentages", () => {
+    const summary = generateRiskSummary(
+      makeInput({
+        holders: makeHolders({ top_10_percentage: 75.3, top_1_percentage: 25.1 }),
+      }),
+    );
+    expect(summary).toContain("top 10 holders own 75.3% of supply");
+    expect(summary).toContain("top holder owns 25.1%");
+  });
+
+  it("includes transfer fee percentage", () => {
+    const summary = generateRiskSummary(
+      makeInput({
+        mint: makeMint({
+          extensions: [{ name: "TransferFeeConfig", transfer_fee_bps: 500 }],
+        }),
+      }),
+    );
+    expect(summary).toContain("5.0% transfer fee");
+  });
+
+  it("flags honeypot", () => {
+    const summary = generateRiskSummary(
+      makeInput({
+        honeypot: makeHoneypot({ can_sell: false, risk: "DANGEROUS" }),
+      }),
+    );
+    expect(summary).toContain("cannot sell (honeypot)");
   });
 });

@@ -4,7 +4,7 @@ import { config } from "./config.js";
 import { logger } from "./utils/logger.js";
 import { ApiError } from "./utils/errors.js";
 import { x402Middleware } from "./x402/middleware.js";
-import { checkToken } from "./analysis/token-checker.js";
+import { checkToken, checkTokenLite } from "./analysis/token-checker.js";
 import { cacheStats } from "./utils/cache.js";
 import { rateLimiter } from "./utils/rate-limit.js";
 
@@ -13,8 +13,10 @@ app.set("trust proxy", 1);
 const startTime = Date.now();
 
 const rateLimit = parseInt(process.env.RATE_LIMIT_PER_MINUTE || "60", 10);
-const healthRateLimit = rateLimiter(rateLimit);
-const paidRateLimit = rateLimiter(rateLimit);
+const liteRateLimit = parseInt(process.env.LITE_RATE_LIMIT_PER_MINUTE || "10", 10);
+const healthRateLimiter = rateLimiter(rateLimit);
+const paidRateLimiter = rateLimiter(rateLimit);
+const liteRateLimiter = rateLimiter(liteRateLimit);
 
 // 1. Request ID — top of stack
 app.use((req, res, next) => {
@@ -59,7 +61,7 @@ app.use((req, res, next) => {
 });
 
 // 3. Health endpoint — free, separate rate limiter
-app.get("/health", healthRateLimit, (_req, res) => {
+app.get("/health", healthRateLimiter, (_req, res) => {
   res.json({
     status: "ok",
     version: "0.1.0",
@@ -69,13 +71,32 @@ app.get("/health", healthRateLimit, (_req, res) => {
   });
 });
 
-// 4. x402 payment gate for paid routes
+// 4. Free lite endpoint — before x402 gate, tight rate limit
+app.get("/v1/check/lite", liteRateLimiter, async (req, res, next) => {
+  try {
+    const mint = req.query.mint as string | undefined;
+    if (!mint) {
+      throw new ApiError(
+        "INVALID_MINT_ADDRESS",
+        "Missing required query parameter: mint",
+      );
+    }
+
+    const { result, fromCache } = await checkTokenLite(mint);
+    res.setHeader("X-Cache", fromCache ? "HIT" : "MISS");
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 5. x402 payment gate for paid routes
 app.use(x402Middleware);
 
-// 5. Rate limiter for paid routes (independent bucket from health)
-app.use(paidRateLimit);
+// 6. Rate limiter for paid routes (independent bucket from health)
+app.use(paidRateLimiter);
 
-// 6. Token safety check — gated by x402
+// 7. Token safety check — gated by x402
 app.get("/v1/check", async (req, res, next) => {
   try {
     const mint = req.query.mint as string | undefined;
@@ -88,7 +109,9 @@ app.get("/v1/check", async (req, res, next) => {
 
     const { result, fromCache } = await checkToken(mint);
     res.setHeader("X-Cache", fromCache ? "HIT" : "MISS");
-    res.json(result);
+    // Strip internal-only fields before sending
+    const { _summary, ...publicResult } = result;
+    res.json(publicResult);
   } catch (err) {
     next(err);
   }

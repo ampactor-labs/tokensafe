@@ -3,6 +3,8 @@ import request from "supertest";
 import type {
   TokenCheckResult,
   CheckTokenResponse,
+  TokenCheckLiteResult,
+  CheckTokenLiteResponse,
 } from "../src/analysis/token-checker.js";
 
 // Mock x402 middleware to passthrough — payment flow tested by smoke test + devnet
@@ -10,17 +12,19 @@ vi.mock("../src/x402/middleware.js", () => ({
   x402Middleware: (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
-// Mock checkToken — boundary between HTTP layer and Solana RPC
+// Mock checkToken + checkTokenLite — boundary between HTTP layer and Solana RPC
 vi.mock("../src/analysis/token-checker.js", () => ({
   checkToken: vi.fn(),
+  checkTokenLite: vi.fn(),
 }));
 
 import { app } from "../src/app.js";
-import { checkToken } from "../src/analysis/token-checker.js";
+import { checkToken, checkTokenLite } from "../src/analysis/token-checker.js";
 import { clearCache } from "../src/utils/cache.js";
 import { clearRateLimitBuckets } from "../src/utils/rate-limit.js";
 
 const mockCheckToken = vi.mocked(checkToken);
+const mockCheckTokenLite = vi.mocked(checkTokenLite);
 
 const WSOL = "So11111111111111111111111111111111111111112";
 
@@ -56,8 +60,21 @@ function makeResult(overrides?: Partial<TokenCheckResult>): CheckTokenResponse {
   return { result, fromCache: false };
 }
 
+function makeLiteResult(overrides?: Partial<TokenCheckLiteResult>): CheckTokenLiteResponse {
+  const result: TokenCheckLiteResult = {
+    mint: WSOL,
+    risk_score: 15,
+    risk_level: "LOW",
+    summary: "No risk factors detected",
+    full_report: "Pay $0.015 via x402 at GET /v1/check?mint=" + WSOL + " for the full detailed analysis",
+    ...overrides,
+  };
+  return { result, fromCache: false };
+}
+
 beforeEach(() => {
   mockCheckToken.mockReset();
+  mockCheckTokenLite.mockReset();
   clearCache();
   clearRateLimitBuckets();
 });
@@ -151,6 +168,44 @@ describe("GET /v1/check", () => {
     const res = await request(app).get(`/v1/check?mint=${WSOL}`);
     expect(res.status).toBe(500);
     expect(res.body.error.code).toBe("INTERNAL_ERROR");
+  });
+});
+
+describe("GET /v1/check/lite", () => {
+  it("returns 200 with lite result for valid mint", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult());
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.status).toBe(200);
+    expect(res.body.mint).toBe(WSOL);
+    expect(res.body.risk_score).toBe(15);
+    expect(res.body.risk_level).toBe("LOW");
+    expect(res.body.summary).toBeDefined();
+    expect(res.body.full_report).toContain("/v1/check");
+  });
+
+  it("does not include detailed checks in lite response", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult());
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.body.checks).toBeUndefined();
+    expect(res.body.name).toBeUndefined();
+    expect(res.body.symbol).toBeUndefined();
+  });
+
+  it("returns 400 for missing mint param", async () => {
+    const res = await request(app).get("/v1/check/lite");
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_MINT_ADDRESS");
+  });
+
+  it("is rate limited more tightly than paid endpoint", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult());
+    // LITE_RATE_LIMIT_PER_MINUTE defaults to 10 in test
+    const requests = Array.from({ length: 12 }, () =>
+      request(app).get(`/v1/check/lite?mint=${WSOL}`),
+    );
+    const responses = await Promise.all(requests);
+    const rateLimited = responses.filter((r) => r.status === 429);
+    expect(rateLimited.length).toBeGreaterThan(0);
   });
 });
 

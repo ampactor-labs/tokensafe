@@ -11,7 +11,7 @@ import { checkLiquidity, type LiquidityResult } from "./checks/liquidity.js";
 import { checkMetadata, type MetadataResult } from "./checks/metadata.js";
 import { checkTokenAge, type TokenAgeResult } from "./checks/token-age.js";
 import { checkHoneypot, type HoneypotResult } from "./checks/honeypot.js";
-import { computeRiskScore } from "./risk-score.js";
+import { computeRiskScore, generateRiskSummary } from "./risk-score.js";
 import { ApiError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import {
@@ -65,6 +65,21 @@ export interface TokenCheckResult {
     is_token_2022: boolean;
     token_2022_extensions: ExtensionInfo[] | null;
   };
+  /** Internal summary for lite endpoint — omitted from full JSON response */
+  _summary?: string;
+}
+
+export interface TokenCheckLiteResult {
+  mint: string;
+  risk_score: number;
+  risk_level: string;
+  summary: string;
+  full_report: string;
+}
+
+export interface CheckTokenLiteResponse {
+  result: TokenCheckLiteResult;
+  fromCache: boolean;
 }
 
 export interface CheckTokenResponse {
@@ -124,6 +139,22 @@ export async function checkToken(
   }
 }
 
+export async function checkTokenLite(
+  mintAddress: string,
+): Promise<CheckTokenLiteResponse> {
+  const { result, fromCache } = await checkToken(mintAddress);
+  return {
+    result: {
+      mint: result.mint,
+      risk_score: result.risk_score,
+      risk_level: result.risk_level,
+      summary: result._summary ?? "No risk factors detected",
+      full_report: "Pay $0.015 via x402 at GET /v1/check?mint=" + mintAddress + " for the full detailed analysis",
+    },
+    fromCache,
+  };
+}
+
 async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
   // Step 1: mint account data (needed for supply → top holders, decimals → honeypot)
   let mintData;
@@ -168,14 +199,16 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
       ? "Top holder may be an AMM vault (token has active liquidity)"
       : null;
 
-  const { risk_score, risk_level } = computeRiskScore({
+  const riskInput = {
     mint: mintData,
     holders,
     liquidity,
     metadata,
     tokenAge,
     honeypot,
-  });
+  };
+  const { risk_score, risk_level } = computeRiskScore(riskInput);
+  const summary = generateRiskSummary(riskInput);
 
   return {
     mint: mintAddress,
@@ -216,5 +249,6 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
       token_2022_extensions:
         mintData.extensions.length > 0 ? mintData.extensions : null,
     },
+    _summary: summary,
   };
 }
