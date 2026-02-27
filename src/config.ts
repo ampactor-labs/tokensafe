@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-dotenv.config();
+dotenv.config({ quiet: true });
 
 function required(key: string): string {
   const val = process.env[key];
@@ -27,4 +27,9 @@ export const config = {
     solanaNetwork === "mainnet"
       ? "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
       : "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+  rateLimitPerMinute: parseInt(process.env.RATE_LIMIT_PER_MINUTE || "60", 10),
+  liteRateLimitPerMinute: parseInt(
+    process.env.LITE_RATE_LIMIT_PER_MINUTE || "10",
+    10,
+  ),
 } as const;

@@ -15,11 +15,9 @@ export const app = express();
 app.set("trust proxy", 1);
 const startTime = Date.now();
 
-const rateLimit = parseInt(process.env.RATE_LIMIT_PER_MINUTE || "60", 10);
-const liteRateLimit = parseInt(process.env.LITE_RATE_LIMIT_PER_MINUTE || "10", 10);
-const healthRateLimiter = rateLimiter(rateLimit);
-const paidRateLimiter = rateLimiter(rateLimit);
-const liteRateLimiter = rateLimiter(liteRateLimit);
+const healthRateLimiter = rateLimiter(config.rateLimitPerMinute);
+const paidRateLimiter = rateLimiter(config.rateLimitPerMinute);
+const liteRateLimiter = rateLimiter(config.liteRateLimitPerMinute);
 
 // 1. Request ID — top of stack
 app.use((req, res, next) => {
