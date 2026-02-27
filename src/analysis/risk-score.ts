@@ -35,6 +35,7 @@ export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
   // Liquidity
   if (input.liquidity) {
     if (!input.liquidity.has_liquidity) score += 30;
+    else if (input.liquidity.lp_locked === false) score += 15;
   }
 
   // Metadata mutability
@@ -86,6 +87,8 @@ export function generateRiskSummary(input: RiskScoreInput): string {
     flags.push(`top holder owns ${input.holders.top_1_percentage.toFixed(1)}%`);
   if (input.liquidity && !input.liquidity.has_liquidity)
     flags.push("no liquidity detected");
+  else if (input.liquidity?.has_liquidity && input.liquidity.lp_locked === false)
+    flags.push("LP not locked");
   if (input.metadata?.mutable) flags.push("mutable metadata");
   if (input.tokenAge?.token_age_hours != null && input.tokenAge.token_age_hours < 1)
     flags.push("token < 1 hour old");

@@ -44,6 +44,9 @@ function makeLiquidity(
   return {
     has_liquidity: true,
     primary_pool: "Raydium",
+    pool_address: null,
+    price_impact_pct: null,
+    liquidity_rating: null,
     lp_locked: null,
     lp_lock_percentage: null,
     lp_lock_expiry: null,
@@ -139,6 +142,27 @@ describe("computeRiskScore", () => {
     );
     expect(result.risk_score).toBe(30);
     expect(result.risk_level).toBe("MODERATE");
+  });
+
+  it("adds 15 for unlocked LP", () => {
+    const result = computeRiskScore(
+      makeInput({ liquidity: makeLiquidity({ lp_locked: false }) }),
+    );
+    expect(result.risk_score).toBe(15);
+  });
+
+  it("adds 0 for locked LP", () => {
+    const result = computeRiskScore(
+      makeInput({ liquidity: makeLiquidity({ lp_locked: true, lp_lock_percentage: 95 }) }),
+    );
+    expect(result.risk_score).toBe(0);
+  });
+
+  it("adds 0 for unknown LP lock (null)", () => {
+    const result = computeRiskScore(
+      makeInput({ liquidity: makeLiquidity({ lp_locked: null }) }),
+    );
+    expect(result.risk_score).toBe(0);
   });
 
   it("skips liquidity scoring when check returned null", () => {
@@ -357,6 +381,20 @@ describe("generateRiskSummary", () => {
       }),
     );
     expect(summary).toContain("5.0% transfer fee");
+  });
+
+  it("includes 'LP not locked' when LP is unlocked", () => {
+    const summary = generateRiskSummary(
+      makeInput({ liquidity: makeLiquidity({ lp_locked: false }) }),
+    );
+    expect(summary).toContain("LP not locked");
+  });
+
+  it("does not include 'LP not locked' when LP is locked", () => {
+    const summary = generateRiskSummary(
+      makeInput({ liquidity: makeLiquidity({ lp_locked: true }) }),
+    );
+    expect(summary).not.toContain("LP not locked");
   });
 
   it("flags honeypot", () => {

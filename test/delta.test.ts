@@ -36,8 +36,11 @@ function makeCheckResult(
       liquidity: {
         has_liquidity: true,
         primary_pool: "Raydium",
-        lp_locked: null,
-        lp_lock_percentage: null,
+        pool_address: null,
+        price_impact_pct: 0.5,
+        liquidity_rating: "DEEP",
+        lp_locked: true,
+        lp_lock_percentage: 95,
         lp_lock_expiry: null,
         risk: "SAFE",
       },
@@ -163,6 +166,9 @@ describe("detectChanges", () => {
         liquidity: {
           has_liquidity: false,
           primary_pool: null,
+          pool_address: null,
+          price_impact_pct: null,
+          liquidity_rating: null,
           lp_locked: null,
           lp_lock_percentage: null,
           lp_lock_expiry: null,
@@ -185,6 +191,9 @@ describe("detectChanges", () => {
         liquidity: {
           has_liquidity: false,
           primary_pool: null,
+          pool_address: null,
+          price_impact_pct: null,
+          liquidity_rating: null,
           lp_locked: null,
           lp_lock_percentage: null,
           lp_lock_expiry: null,
@@ -313,6 +322,104 @@ describe("detectChanges", () => {
     const curr = makeCheckResult({ risk_score: 18 });
     expect(detectChanges(prev, curr)).toBeNull();
   });
+
+  // --- LP lock changes ---
+  it("detects LP unlock (true → false) as CRITICAL", () => {
+    const prev = makeCheckResult();
+    const curr = makeCheckResult({
+      risk_score: 30,
+      checks: {
+        ...makeCheckResult().checks,
+        liquidity: {
+          ...makeCheckResult().checks.liquidity!,
+          lp_locked: false,
+          lp_lock_percentage: 0,
+        },
+      },
+    });
+    const report = detectChanges(prev, curr)!;
+    expect(report).not.toBeNull();
+    const change = report.changed_fields.find(
+      (f) => f.path === "checks.liquidity.lp_locked",
+    );
+    expect(change).toBeDefined();
+    expect(change!.severity).toBe("CRITICAL");
+  });
+
+  it("detects LP lock percentage drop > 20 pts as HIGH", () => {
+    const prev = makeCheckResult();
+    const curr = makeCheckResult({
+      checks: {
+        ...makeCheckResult().checks,
+        liquidity: {
+          ...makeCheckResult().checks.liquidity!,
+          lp_lock_percentage: 50,
+        },
+      },
+    });
+    const report = detectChanges(prev, curr)!;
+    expect(report).not.toBeNull();
+    const change = report.changed_fields.find(
+      (f) => f.path === "checks.liquidity.lp_lock_percentage",
+    );
+    expect(change).toBeDefined();
+    expect(change!.severity).toBe("HIGH");
+  });
+
+  it("detects price impact spike > 10 pts as HIGH", () => {
+    const prev = makeCheckResult();
+    const curr = makeCheckResult({
+      checks: {
+        ...makeCheckResult().checks,
+        liquidity: {
+          ...makeCheckResult().checks.liquidity!,
+          price_impact_pct: 15,
+        },
+      },
+    });
+    const report = detectChanges(prev, curr)!;
+    expect(report).not.toBeNull();
+    const change = report.changed_fields.find(
+      (f) => f.path === "checks.liquidity.price_impact_pct",
+    );
+    expect(change).toBeDefined();
+    expect(change!.severity).toBe("HIGH");
+  });
+
+  it("detects liquidity rating degradation as HIGH", () => {
+    const prev = makeCheckResult();
+    const curr = makeCheckResult({
+      checks: {
+        ...makeCheckResult().checks,
+        liquidity: {
+          ...makeCheckResult().checks.liquidity!,
+          liquidity_rating: "SHALLOW",
+        },
+      },
+    });
+    const report = detectChanges(prev, curr)!;
+    expect(report).not.toBeNull();
+    const change = report.changed_fields.find(
+      (f) => f.path === "checks.liquidity.liquidity_rating",
+    );
+    expect(change).toBeDefined();
+    expect(change!.severity).toBe("HIGH");
+  });
+
+  it("ignores small LP lock percentage changes (<= 20 pts)", () => {
+    const prev = makeCheckResult();
+    const curr = makeCheckResult({
+      checks: {
+        ...makeCheckResult().checks,
+        liquidity: {
+          ...makeCheckResult().checks.liquidity!,
+          lp_lock_percentage: 80,
+        },
+      },
+    });
+    // 95 → 80 = 15 pts drop, should not trigger
+    expect(detectChanges(prev, curr)).toBeNull();
+  });
 });
 
 describe("generateAlerts", () => {
@@ -349,6 +456,9 @@ describe("generateAlerts", () => {
         liquidity: {
           has_liquidity: false,
           primary_pool: null,
+          pool_address: null,
+          price_impact_pct: null,
+          liquidity_rating: null,
           lp_locked: null,
           lp_lock_percentage: null,
           lp_lock_expiry: null,
@@ -361,6 +471,26 @@ describe("generateAlerts", () => {
     const liqAlert = alerts.find((a) => a.message.includes("Liquidity"));
     expect(liqAlert).toBeDefined();
     expect(liqAlert!.severity).toBe("CRITICAL");
+  });
+
+  it("generates CRITICAL alert for LP unlock", () => {
+    const prev = makeCheckResult();
+    const curr = makeCheckResult({
+      risk_score: 30,
+      checks: {
+        ...makeCheckResult().checks,
+        liquidity: {
+          ...makeCheckResult().checks.liquidity!,
+          lp_locked: false,
+          lp_lock_percentage: 0,
+        },
+      },
+    });
+    const changes = detectChanges(prev, curr)!;
+    const alerts = generateAlerts(WSOL, "SOL", changes);
+    const lpAlert = alerts.find((a) => a.message.includes("LP unlocked"));
+    expect(lpAlert).toBeDefined();
+    expect(lpAlert!.severity).toBe("CRITICAL");
   });
 
   it("generates risk score delta alert when no field changes explain it", () => {

@@ -101,6 +101,44 @@ const CHANGE_RULES: ChangeRule[] = [
     isSignificant: (p, c) => p === true && c === false,
     severity: "CRITICAL",
   },
+  // LP lock removed — rug vector
+  {
+    path: "checks.liquidity.lp_locked",
+    extract: (r) => r.checks.liquidity?.lp_locked ?? null,
+    isSignificant: (p, c) => p === true && c === false,
+    severity: "CRITICAL",
+  },
+  // LP lock percentage dropped significantly
+  {
+    path: "checks.liquidity.lp_lock_percentage",
+    extract: (r) => r.checks.liquidity?.lp_lock_percentage ?? null,
+    isSignificant: (p, c) =>
+      typeof p === "number" &&
+      typeof c === "number" &&
+      p - c > 20,
+    severity: "HIGH",
+  },
+  // Price impact spike — liquidity draining
+  {
+    path: "checks.liquidity.price_impact_pct",
+    extract: (r) => r.checks.liquidity?.price_impact_pct ?? null,
+    isSignificant: (p, c) =>
+      typeof p === "number" &&
+      typeof c === "number" &&
+      c - p > 10,
+    severity: "HIGH",
+  },
+  // Liquidity rating degradation
+  {
+    path: "checks.liquidity.liquidity_rating",
+    extract: (r) => r.checks.liquidity?.liquidity_rating ?? null,
+    isSignificant: (p, c) => {
+      const order = ["DEEP", "MODERATE", "SHALLOW", "NONE"];
+      if (typeof p !== "string" || typeof c !== "string") return false;
+      return order.indexOf(c) > order.indexOf(p) && order.indexOf(p) >= 0;
+    },
+    severity: "HIGH",
+  },
 
   // Metadata mutability — becoming mutable is a warning
   {
@@ -187,6 +225,14 @@ function formatChangeMessage(change: FieldChange): string {
       return `Freeze authority address changed`;
     case "checks.liquidity.has_liquidity":
       return "Liquidity lost — token may no longer be sellable";
+    case "checks.liquidity.lp_locked":
+      return "LP unlocked — liquidity can now be pulled";
+    case "checks.liquidity.lp_lock_percentage":
+      return `LP lock dropped from ${change.previous}% to ${change.current}%`;
+    case "checks.liquidity.price_impact_pct":
+      return `Liquidity depth degraded — price impact went from ${change.previous}% to ${change.current}%`;
+    case "checks.liquidity.liquidity_rating":
+      return `Liquidity rating degraded from ${change.previous} to ${change.current}`;
     case "checks.honeypot.can_sell":
       return "Token is no longer sellable (honeypot detected)";
     case "checks.top_holders.top_1_percentage":
