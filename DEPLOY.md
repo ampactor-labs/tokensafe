@@ -1,4 +1,4 @@
-# TokenSafe — Deploy & Test
+# TokenSafe — Deploy & Ship
 
 ## Prerequisites
 
@@ -7,13 +7,11 @@
 | **Node.js 22+** and **npm** | [nodejs.org](https://nodejs.org) or `nvm install 22` |
 | **Helius API key** | Free at [helius.dev](https://helius.dev) → Dashboard → API Keys. 1M credits/month (~6,600 checks/day). |
 | **Solana wallet address** | Any base58 Solana address. Phantom → receive → copy address. This is your treasury — it receives USDC payments. |
-| **GitHub repo** | Railway deploys from GitHub. Push the repo before §3. |
+| **GitHub repo** | Railway deploys from GitHub. Push to `main` before §3. |
 
-**Optional:** [Solana CLI tools](https://solana.com/docs/intro/installation) — not required. Every step in this guide works without them. Install only if you prefer CLI over web faucets:
+**Optional:** [Solana CLI tools](https://solana.com/docs/intro/installation) — not required. Every step in this guide works without them.
 
-```bash
-sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
-```
+---
 
 ## 1. Install and Verify
 
@@ -21,7 +19,9 @@ sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
 npm install && npm test && npx tsc --noEmit
 ```
 
-27 tests pass (16 risk-score unit + 11 integration). Integration tests mock x402 and RPC — no network needed.
+144 tests pass (42 risk-score + 31 checks + 27 delta + 18 liquidity + 26 integration). Tests mock x402 and RPC — no network or wallet needed.
+
+---
 
 ## 2. Local Smoke Test
 
@@ -30,24 +30,36 @@ cp .env.example .env
 ```
 
 Edit `.env`:
-- `TREASURY_WALLET_ADDRESS` — your Solana wallet address (any valid base58 address)
-- `HELIUS_API_KEY` — paste the key from your Helius dashboard
+- `TREASURY_WALLET_ADDRESS` — your Solana wallet address
+- `HELIUS_API_KEY` — paste from your Helius dashboard
 
 Leave `SOLANA_NETWORK=devnet` and `NODE_ENV=development`.
 
-Start the server:
+Start the server, then smoke test in another terminal:
 
 ```bash
 npm run dev
 ```
 
-In another terminal:
-
 ```bash
 npm run test:smoke
 ```
 
-Validates: health endpoint (200, version, network, uptime, cache size), x402 gate (402 + `PAYMENT-REQUIRED` header), 404 handling, `X-Response-Time` and `X-RateLimit-*` headers. Exits 0 on pass, 1 on fail.
+The smoke test validates all endpoints:
+
+| Check | What it verifies |
+|---|---|
+| `GET /health` → 200 | Status, version, network, uptime, cache stats, monitor cache stats |
+| Response headers | `X-Response-Time` (ms), `X-RateLimit-Limit/Remaining/Reset` |
+| `GET /v1/check/lite` → 200 | Risk score, risk level, summary, full_report upsell, no `checks` (paid-only) |
+| `GET /v1/check/lite` bad mint → 400 | `INVALID_MINT_ADDRESS` error |
+| `GET /v1/check/lite` no mint → 400 | Missing parameter error |
+| `X-Cache` on lite | `HIT` or `MISS` header present |
+| `GET /v1/check` → 402 | `PAYMENT-REQUIRED` header with x402 payment requirements |
+| `GET /v1/monitor` → 402 | `PAYMENT-REQUIRED` header with x402 payment requirements |
+| `GET /unknown` → 404 | `NOT_FOUND` structured error |
+
+Exits 0 on pass, 1 on fail.
 
 To smoke-test a deployed instance:
 
@@ -67,50 +79,62 @@ curl -i "http://localhost:3000/v1/check?mint=So111111111111111111111111111111111
 
 Should return 402 with `PAYMENT-REQUIRED` header containing price ($0.015 USDC), devnet CAIP-2 network, and your treasury wallet.
 
+```bash
+curl "http://localhost:3000/v1/check/lite?mint=So11111111111111111111111111111111111111112"
+```
+
+Should return 200 with `risk_score`, `risk_level`, `summary`, and `full_report` (upsell to paid endpoint).
+
 ### Rate limiting
 
 ```bash
 seq 65 | xargs -I{} curl -s -o /dev/null -w "{}: %{http_code}\n" "http://localhost:3000/health"
 ```
 
-Requests 61-65 return `429`. Inspect headers:
+Requests 61-65 return `429`. Lite endpoint has a separate, tighter limit (10/min default).
 
-```bash
-curl -sI http://localhost:3000/health | grep -i x-ratelimit
-```
+---
 
 ## 3. Deploy to Railway
 
-1. Sign in at [railway.app](https://railway.app) with GitHub.
-2. New Project → Deploy from GitHub repo → select `tokensafe`.
-3. Railway auto-detects the Dockerfile — no build command config needed.
-4. Set env vars in Settings → Variables:
+Already deployed once — this is a redeploy with the full feature set.
 
-| Variable | Value |
-|---|---|
-| `TREASURY_WALLET_ADDRESS` | Your Solana wallet address |
-| `HELIUS_API_KEY` | Your Helius key |
-| `SOLANA_NETWORK` | `devnet` |
-| `NODE_ENV` | `production` |
+1. Push to GitHub: `git push origin main`
+2. Railway auto-detects the push and redeploys from the Dockerfile.
+3. Verify env vars in Settings → Variables:
 
-Railway injects `PORT` automatically — don't set it. `FACILITATOR_URL` and `RATE_LIMIT_PER_MINUTE` have sensible defaults; leave unset unless you need to override.
+| Variable | Value | Notes |
+|---|---|---|
+| `TREASURY_WALLET_ADDRESS` | Your Solana wallet address | Receives USDC payments |
+| `HELIUS_API_KEY` | Your Helius key | Free tier: 1M credits/month |
+| `SOLANA_NETWORK` | `devnet` | Switch to `mainnet` in §5 |
+| `NODE_ENV` | `production` | Omits pino-pretty, runs lean |
 
-5. Settings → Networking → Generate Domain.
-6. Verify:
+Railway injects `PORT` automatically — don't set it. Other optional vars and their defaults:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `FACILITATOR_URL` | `https://facilitator.payai.network` | PayAI Solana facilitator |
+| `RATE_LIMIT_PER_MINUTE` | `60` | Per-IP limit for health + paid endpoints |
+| `LITE_RATE_LIMIT_PER_MINUTE` | `10` | Per-IP limit for free lite endpoint |
+
+4. Verify:
 
 ```bash
 curl https://<your-railway-domain>/health
 ```
 
-The deploy log will show `bigint: Failed to load bindings, pure JS will be used` — this is a harmless warning from a transitive dependency. The server runs fine on the pure JS fallback.
+The deploy log will show `bigint: Failed to load bindings, pure JS will be used` — harmless warning from a transitive dependency.
 
 ### Fallback: Render
 
 Same Docker deploy, truly free, but 30s cold starts after 15min idle. Fine for testing, too slow for agents.
 
+---
+
 ## 4. Test Full x402 Flow (devnet)
 
-End-to-end test: test wallet pays $0.015 devnet USDC → facilitator settles on-chain → server returns token analysis. The `scripts/x402-client.ts` script handles the full 402→sign→retry flow automatically.
+End-to-end: test wallet pays USDC → facilitator settles on-chain → server returns analysis.
 
 ### 4.1 Generate a test wallet
 
@@ -118,46 +142,29 @@ End-to-end test: test wallet pays $0.015 devnet USDC → facilitator settles on-
 npm run wallet:generate
 ```
 
-Output:
-
-```
-Address:         <YOUR_TEST_ADDRESS>
-SVM_PRIVATE_KEY: <YOUR_BASE58_KEYPAIR>
-
-Next steps:
-  1. Fund with devnet SOL:  https://faucet.solana.com
-  2. Fund with devnet USDC: https://faucet.circle.com
-  3. Run the test client:
-     SVM_PRIVATE_KEY=<YOUR_BASE58_KEYPAIR> npm run test:x402
-```
-
-Save the `SVM_PRIVATE_KEY` value — you'll need it for §4.4 and §4.6. The address is what you paste into faucets below.
+Save the `SVM_PRIVATE_KEY` value — you need it for §4.4 and §4.6.
 
 ### 4.2 Fund the test wallet
 
-**Devnet SOL** (needed for transaction fees):
+**Devnet SOL** (transaction fees):
 
 Go to [faucet.solana.com](https://faucet.solana.com) → select Devnet → paste the address from §4.1 → request 2 SOL.
 
-Or, if you have the Solana CLI installed:
+**Devnet USDC** (x402 payments):
 
-```bash
-solana airdrop 2 <YOUR_TEST_ADDRESS> --url devnet
-```
+Go to [faucet.circle.com](https://faucet.circle.com) → select **Solana** → select **Devnet** → paste the address. Deposits devnet USDC (mint: `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`).
 
-**Devnet USDC** (needed for x402 payments):
-
-Go to [faucet.circle.com](https://faucet.circle.com) → select **Solana** → select **Devnet** → paste the address from §4.1. This deposits devnet USDC (mint: `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`). 1 USDC = ~66 test runs at $0.015 each.
+1 USDC = 66 full checks ($0.015) or 200 monitor calls ($0.005).
 
 ### 4.3 Fund treasury wallet with devnet USDC
 
-Your treasury wallet (`TREASURY_WALLET_ADDRESS` in `.env`) must have a USDC Associated Token Account on devnet. Without it, the payment transaction fails because there's no destination account for the USDC transfer.
+Your treasury wallet needs a USDC Associated Token Account on devnet. Without it, the payment transaction fails — no destination account for the USDC transfer.
 
-Go to [faucet.circle.com](https://faucet.circle.com) → select **Solana** → select **Devnet** → paste your **treasury wallet address**. This auto-creates the ATA and deposits devnet USDC. Even a tiny amount is enough — the ATA just needs to exist.
+Go to [faucet.circle.com](https://faucet.circle.com) → **Solana** → **Devnet** → paste your **treasury wallet address**. This auto-creates the ATA and deposits devnet USDC. Even a tiny amount is enough.
 
 ### 4.4 Run the test client
 
-Start the server (if not already running):
+Start the server if not already running:
 
 ```bash
 npm run dev
@@ -169,13 +176,13 @@ In another terminal:
 SVM_PRIVATE_KEY=<YOUR_BASE58_KEYPAIR> npm run test:x402
 ```
 
-Replace `<YOUR_BASE58_KEYPAIR>` with the value from §4.1.
-
-To test a different mint address:
+To test a specific mint:
 
 ```bash
 SVM_PRIVATE_KEY=<YOUR_BASE58_KEYPAIR> npx tsx scripts/x402-client.ts EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
 ```
+
+The test client only tests `GET /v1/check` (the $0.015 paid endpoint). The monitor endpoint (`GET /v1/monitor`) uses the same x402 flow at $0.005 — if check works, monitor works.
 
 ### 4.5 Expected output
 
@@ -189,25 +196,26 @@ SVM_PRIVATE_KEY=<YOUR_BASE58_KEYPAIR> npx tsx scripts/x402-client.ts EPjFWdd5Auf
   "mint": "So11111111111111111111111111111111111111112",
   "risk_score": 15,
   "risk_level": "LOW",
-  ...
+  "checks": { ... }
 }
 ```
 
 Verify the USDC transfer on [Solana Explorer](https://explorer.solana.com/?cluster=devnet) — search the test wallet address, look for a recent USDC transfer to your treasury wallet.
 
-Run again within 5 minutes — same response but `X-Cache: HIT` (cached result; still charges per-request).
+Run again within 5 minutes — same response but `X-Cache: HIT` (cached; still charges per-request).
 
 ### 4.6 Test against Railway
 
 ```bash
-SVM_PRIVATE_KEY=<YOUR_BASE58_KEYPAIR> SMOKE_URL=https://tokensafe-production.up.railway.app npm run test:x402
+SVM_PRIVATE_KEY=<YOUR_BASE58_KEYPAIR> SMOKE_URL=https://<your-railway-domain> npm run test:x402
 ```
 
 ### 4.7 Checklist
 
 - [ ] Smoke test passes locally (`npm run test:smoke`)
 - [ ] 402 response has `PAYMENT-REQUIRED` header
-- [ ] Payment amount = 15000 ($0.015 USDC, 6 decimals)
+- [ ] `/v1/check` payment amount = 15000 ($0.015 USDC, 6 decimals)
+- [ ] `/v1/monitor` payment amount = 5000 ($0.005 USDC, 6 decimals)
 - [ ] `payTo` in payment requirements matches `TREASURY_WALLET_ADDRESS`
 - [ ] Network = `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` (devnet CAIP-2)
 - [ ] x402 client gets 200 with full analysis JSON after payment
@@ -217,53 +225,140 @@ SVM_PRIVATE_KEY=<YOUR_BASE58_KEYPAIR> SMOKE_URL=https://tokensafe-production.up.
 - [ ] Fresh analysis completes in < 2s
 - [ ] Smoke test passes against Railway (`SMOKE_URL=... npm run test:smoke`)
 
-### 4.8 Troubleshooting
-
-**"Transaction simulation failed"** — Test wallet has no SOL (can't pay tx fees) or no USDC. Re-do §4.2.
-
-**"Account not found"** — Treasury wallet has no USDC ATA on devnet. Re-do §4.3.
-
-**"Payment verification failed at facilitator"** — PayAI facilitator may not support devnet. Switch to Coinbase facilitator: set `FACILITATOR_URL=https://x402.org/facilitator` in `.env` and restart the server.
-
-**"Blockhash expired"** — Facilitator was too slow to settle. Transient — retry.
-
-**"No matching scheme"** — The client couldn't match the server's network identifier. Ensure server `.env` has `SOLANA_NETWORK=devnet`.
-
-**ECONNREFUSED** — Server not running. Start with `npm run dev`.
-
-**400 Bad Request** — Invalid or missing `mint` query parameter. Must be a valid base58 Solana token mint address.
-
-**503 Service Unavailable** — Helius RPC unreachable. Check your `HELIUS_API_KEY` is valid: `curl "https://devnet.helius-rpc.com/?api-key=YOUR_KEY"`.
+---
 
 ## 5. Switch to Mainnet
 
 1. Update Railway env vars: set `SOLANA_NETWORK=mainnet`. Railway auto-redeploys.
 2. Fund your treasury wallet with a tiny amount of **mainnet** USDC (any amount — the ATA needs to exist). Send from Phantom or any wallet.
-3. Re-run the smoke test against Railway to verify the 402 response now shows the mainnet CAIP-2 network (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`) and the mainnet USDC mint.
-4. To test the full payment flow on mainnet, generate a new wallet (`npm run wallet:generate`), fund it with real SOL + real USDC, and run `npm run test:x402`. Cost: $0.015 USDC + ~$0.001 tx fee.
+3. Re-run smoke test against Railway — verify 402 response shows mainnet CAIP-2 (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`) and mainnet USDC mint.
+4. Full payment test on mainnet: generate a new wallet (`npm run wallet:generate`), fund with real SOL + real USDC, run `npm run test:x402`. Cost: $0.015 + ~$0.001 tx fee.
+
+---
 
 ## 6. Agent Discovery Registrations
 
-Without these, no agent finds you. These are the "marketing" — machine-readable registration, not human marketing.
+Without these, no agent finds you. These are machine-readable registrations — the equivalent of marketing for an API that sells to autonomous agents.
 
-1. **smithery.ai** — register MCP tool using `src/mcp/tool-definition.json`
-2. **mcp.so** — same tool definition, official MCP registry
-3. **x402.org/ecosystem** — submit PR to x402 Foundation repo (name, URL, price, category: Security/Analytics)
-4. **payai.network** — list on PayAI marketplace (already using their facilitator)
-5. **x402scan** — submit manually to Merit Systems explorer
+### Endpoints to register
+
+| Endpoint | Method | Price | Auth | Description |
+|---|---|---|---|---|
+| `/v1/check` | GET | $0.015 USDC | x402 | Full token safety analysis with all checks |
+| `/v1/check/lite` | GET | Free | None (rate-limited) | Risk score + summary, no detailed checks |
+| `/v1/monitor` | GET | $0.005 USDC | x402 | Portfolio monitor for up to 10 tokens with delta detection |
+| `/health` | GET | Free | None | Server status, version, cache stats |
+
+### 6.1 MCP Registries (smithery.ai + mcp.so)
+
+Register **three** MCP tools using `src/mcp/tool-definition.json`:
+
+**Tool 1: `solana_token_safety_check`**
+- Endpoint: `GET /v1/check?mint={mint_address}`
+- Price: $0.015 USDC via x402
+- Keywords in description: safe to trade, rug pull, mint authority, freeze authority, liquidity, honeypot, risk score, Token-2022
+
+**Tool 2: `solana_token_safety_lite`**
+- Endpoint: `GET /v1/check/lite?mint={mint_address}`
+- Price: Free
+- Keywords: quick check, risk score, free, screening
+
+**Tool 3: `solana_token_portfolio_monitor`**
+- Endpoint: `GET /v1/monitor?mints={comma_separated_addresses}`
+- Price: $0.005 USDC via x402
+- Keywords: monitor, portfolio, delta, changes, alerts, surveillance
+
+The descriptions in `tool-definition.json` are optimized for LLM pattern-matching. The agent's model reads these descriptions to decide whether to invoke the tool — specific, concrete terms matter more than marketing language.
+
+**smithery.ai:** [smithery.ai](https://smithery.ai) — submit via their web form or CLI.
+
+**mcp.so:** [mcp.so](https://mcp.so) — official MCP registry. Same tool definitions.
+
+### 6.2 x402.org Ecosystem Page
+
+Submit via GitHub PR to the [x402 Foundation repo](https://github.com/coinbase/x402). Format matches existing listings at [x402.org/ecosystem](https://www.x402.org/ecosystem).
+
+Listing copy:
+
+```
+Name: TokenSafe
+URL: https://<your-railway-domain>
+Description: Cheapest transparent Solana token safety scanner — deterministic on-chain analysis, $0.015/check or free lite tier. Mint/freeze authority, holder concentration, liquidity depth, LP locks, honeypot detection, sell tax estimation, Token-2022 risks. No API keys, no accounts. Pay per request in USDC via x402.
+Category: Security / Analytics
+Network: Solana
+Price: $0.015/check (full), $0.005/monitor, free (lite)
+Payment: USDC on Solana via x402
+```
+
+### 6.3 PayAI Marketplace
+
+Register at [payai.network](https://payai.network). Already using their facilitator — agents browsing PayAI's marketplace see services listed here.
+
+Listing should include all three endpoints with their prices. Emphasize the free lite tier — it's a funnel into the paid endpoint.
+
+### 6.4 x402scan (Merit Systems)
+
+Submit manually at [x402scan](https://x402scan.com) for inclusion. No automatic discovery — manual submission required.
+
+### 6.5 Ecosystem Amplification (Free)
+
+**Post ideas (one is enough, pick the best channel):**
+
+- **dev.to:** "I Built the Cheapest x402 Token Safety Scanner on Solana" — cover the methodology (pure on-chain, no GoPlus proxy), the free tier funnel, and the x402 payment flow. Include code snippets showing how an agent discovers and pays for a check.
+- **Solana Stack Exchange:** Answer token safety questions with "here's how to check programmatically" + link. Build authority.
+- **Solana x402 Discord/Telegram:** Post in ecosystem channels. The hackathon ended Nov 2025 but the community is active.
+
+**Key differentiators to emphasize everywhere:**
+
+1. **Cheapest:** $0.015/check full, free lite tier. Rug Munch charges $0.02-$2.00.
+2. **Transparent:** Every risk point traceable to on-chain state. No opaque ML scoring.
+3. **Direct on-chain:** Zero dependency on GoPlus, RugCheck, or any third-party security API.
+4. **Free tier:** `/v1/check/lite` gives agents a zero-cost way to screen tokens before paying for the full report.
+5. **Portfolio monitoring:** `/v1/monitor` with delta detection and severity-ranked alerts.
+6. **No accounts, no API keys:** Payment IS authentication. USDC in, analysis out.
+
+---
+
+## 7. npm Scripts Reference
+
+| Script | Command | What it does |
+|---|---|---|
+| `npm run dev` | `tsx watch src/index.ts` | Dev server with hot reload + pino-pretty logs |
+| `npm run build` | `tsc` | Compile to `dist/` |
+| `npm start` | `node dist/index.js` | Production server |
+| `npm test` | `vitest run` | 144 tests (mocked, no network) |
+| `npm run test:smoke` | `tsx scripts/smoke.ts` | Smoke test against running server |
+| `npm run test:x402` | `tsx scripts/x402-client.ts` | x402 paid request test |
+| `npm run wallet:generate` | `tsx scripts/generate-test-wallet.ts` | Generate Solana test keypair |
+
+Override target URL for smoke and x402 tests: `SMOKE_URL=https://... npm run test:smoke`
+
+---
 
 ## Troubleshooting
 
 **402 response empty or malformed:** `TREASURY_WALLET_ADDRESS` must be a valid base58 Solana address. Check `.env`.
 
-**RPC errors (503):** Helius key invalid or rate-limited. Verify: `curl "https://devnet.helius-rpc.com/?api-key=YOUR_KEY"`. Free tier = 10 RPS, 1M credits/month.
+**"Transaction simulation failed":** Test wallet has no SOL (can't pay tx fees) or no USDC. Re-do §4.2.
 
-**Payment fails at facilitator:** Confirm `FACILITATOR_URL`. Default is `https://facilitator.payai.network`. If PayAI is down, try `https://x402.org/facilitator`.
+**"Account not found":** Treasury wallet has no USDC ATA on devnet. Re-do §4.3.
+
+**"Payment verification failed at facilitator":** PayAI facilitator may not support devnet. Try Coinbase: set `FACILITATOR_URL=https://x402.org/facilitator` in `.env` and restart.
+
+**"Blockhash expired":** Facilitator was too slow to settle. Transient — retry.
+
+**"No matching scheme":** Client couldn't match the server's network identifier. Ensure `SOLANA_NETWORK=devnet` in `.env`.
+
+**ECONNREFUSED:** Server not running. Start with `npm run dev`.
+
+**400 Bad Request:** Invalid or missing `mint` query parameter. Must be a valid base58 Solana token mint address.
+
+**429 Too Many Requests:** Hit rate limit. Default: 60/min for paid endpoints, 10/min for lite. Adjust via `RATE_LIMIT_PER_MINUTE` and `LITE_RATE_LIMIT_PER_MINUTE` env vars.
+
+**503 Service Unavailable:** Helius RPC unreachable. Verify key: `curl "https://devnet.helius-rpc.com/?api-key=YOUR_KEY"`. Free tier = 10 RPS, 1M credits/month.
 
 **Railway deploy fails:** Check build logs. Usually TypeScript errors — run `npx tsc --noEmit` locally first.
 
-**Cache not working:** Hit same mint twice within 5min. First: `X-Cache: MISS`. Second: `X-Cache: HIT`. Check `/health` response for `cache.size`.
+**Cache not working:** Hit same mint twice within 5min. First: `X-Cache: MISS`. Second: `X-Cache: HIT`. Check `/health` for `cache.size`.
 
-**Rate limiter too aggressive:** Set `RATE_LIMIT_PER_MINUTE=300` in Railway env vars.
-
-**`bigint: Failed to load bindings`** — Harmless warning in Docker. Native BigInt addon not available; pure JS fallback works identically. No action needed.
+**`bigint: Failed to load bindings`:** Harmless warning in Docker. Native BigInt addon not available; pure JS fallback works identically.

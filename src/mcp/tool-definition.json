@@ -1,14 +1,44 @@
-{
-  "name": "solana_token_safety_check",
-  "description": "Check if a Solana SPL token is safe to trade. Analyzes mint authority, freeze authority, top holder concentration, liquidity availability, sell-side honeypot detection, metadata mutability, token age, and Token-2022 extension risks (transfer fees, permanent delegate). Returns a composite risk score 0-100 and per-check risk assessments. Accepts any Solana token mint address. Useful before buying, swapping, or providing liquidity to any Solana token.",
-  "inputSchema": {
-    "type": "object",
-    "properties": {
-      "mint_address": {
-        "type": "string",
-        "description": "Solana token mint address in base58 format"
-      }
-    },
-    "required": ["mint_address"]
+[
+  {
+    "name": "solana_token_safety_check",
+    "description": "Full safety analysis for any Solana SPL token. Returns mint/freeze authority status, top holder concentration, liquidity depth and LP lock status, sell-side honeypot detection with tax estimation, metadata mutability, token age, Token-2022 extension risks (transfer fees, permanent delegate), and a composite risk score 0-100. Direct on-chain analysis via RPC — no third-party security APIs, no opaque ML. Costs $0.015 USDC via x402. Use before buying, swapping, or providing liquidity.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "mint_address": {
+          "type": "string",
+          "description": "Solana token mint address in base58 format"
+        }
+      },
+      "required": ["mint_address"]
+    }
+  },
+  {
+    "name": "solana_token_safety_lite",
+    "description": "Quick free safety check for any Solana SPL token. Returns risk score (0-100), risk level, and a human-readable summary. Same analysis engine as the full check but without detailed per-check breakdowns. Free, rate-limited to 10 requests/minute per IP. Use for fast screening before deciding whether to pay for a full report.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "mint_address": {
+          "type": "string",
+          "description": "Solana token mint address in base58 format"
+        }
+      },
+      "required": ["mint_address"]
+    }
+  },
+  {
+    "name": "solana_token_portfolio_monitor",
+    "description": "Monitor up to 10 Solana tokens at once. Returns current safety state for each token plus delta detection — what changed since the last check (authority changes, holder concentration shifts, liquidity movements, risk score changes). Generates severity-ranked alerts for critical changes like authority activations or liquidity removals. Costs $0.005 USDC via x402. Use for portfolio surveillance and automated risk alerts.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "mint_addresses": {
+          "type": "string",
+          "description": "Comma-separated list of Solana token mint addresses in base58 format (max 10)"
+        }
+      },
+      "required": ["mint_addresses"]
+    }
   }
-}
+]
