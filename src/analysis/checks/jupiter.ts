@@ -8,6 +8,7 @@
 
 const JUPITER_QUOTE_URL = "https://lite-api.jup.ag/swap/v1/quote";
 export const SOL_MINT = "So11111111111111111111111111111111111111112";
+const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 /** 0.1 SOL — small enough for low price impact, large enough for meaningful quote */
 const BUY_AMOUNT_LAMPORTS = "100000000";
@@ -55,19 +56,15 @@ export async function fetchQuote(
 export async function fetchRoundTrip(
   mintAddress: string,
 ): Promise<JupiterRoundTrip> {
-  const buyQuote = await fetchQuote(
-    SOL_MINT,
-    mintAddress,
-    BUY_AMOUNT_LAMPORTS,
-  );
+  // wSOL special case: can't quote SOL→SOL, use USDC as the pair instead
+  const pairMint = mintAddress === SOL_MINT ? USDC_MINT : SOL_MINT;
+  const buyAmount = mintAddress === SOL_MINT ? "5000000" : BUY_AMOUNT_LAMPORTS; // 5 USDC vs 0.1 SOL
+
+  const buyQuote = await fetchQuote(pairMint, mintAddress, buyAmount);
   if (!buyQuote || !buyQuote.outAmount || buyQuote.outAmount === "0") {
     return { buyQuote: null, sellQuote: null };
   }
 
-  const sellQuote = await fetchQuote(
-    mintAddress,
-    SOL_MINT,
-    buyQuote.outAmount,
-  );
+  const sellQuote = await fetchQuote(mintAddress, pairMint, buyQuote.outAmount);
   return { buyQuote, sellQuote };
 }

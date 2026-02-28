@@ -47,8 +47,10 @@ export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
     input.liquidity?.liquidity_rating === "DEEP" ||
     (input.liquidity?.price_impact_pct != null &&
       input.liquidity.price_impact_pct < 1.0);
+  // Established = age check succeeded but couldn't determine precise age (>100 txs).
+  // RPC timeout (tokenAge === null) does NOT count as established.
   const isEstablished =
-    input.tokenAge === null || input.tokenAge.token_age_hours === null;
+    input.tokenAge !== null && input.tokenAge.token_age_hours === null;
   const isDistributed =
     input.holders.top_10_percentage > 0 && input.holders.top_10_percentage < 30;
   const maturitySignals =
@@ -95,8 +97,8 @@ export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
     else if (input.liquidity.lp_locked === false) score += 15;
   }
 
-  // Metadata mutability
-  if (input.metadata?.mutable) score += 10;
+  // Metadata mutability (context-aware: established tokens need mutable metadata)
+  if (input.metadata?.mutable) score += maturitySignals >= 2 ? 5 : 10;
 
   // Token age
   if (input.tokenAge?.token_age_hours !== null && input.tokenAge) {

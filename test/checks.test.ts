@@ -351,6 +351,22 @@ describe("checkLiquidity", () => {
     expect(result.risk).toBe("SAFE");
   });
 
+  it("pairs wSOL with USDC instead of SOL (avoids self-quoting)", async () => {
+    const SOL_MINT = "So11111111111111111111111111111111111111112";
+    const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    (fetch as Mock).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          routePlan: [{ swapInfo: { label: "Raydium" } }],
+        }),
+    });
+    await checkLiquidity(SOL_MINT);
+    const calledUrl = (fetch as Mock).mock.calls[0][0] as string;
+    expect(calledUrl).toContain(`outputMint=${USDC_MINT}`);
+    expect(calledUrl).not.toContain(`outputMint=${SOL_MINT}`);
+  });
+
   it("returns CRITICAL when response is not ok", async () => {
     (fetch as Mock).mockResolvedValue({ ok: false });
     const result = await checkLiquidity(MINT);
@@ -485,8 +501,8 @@ describe("checkTokenAge", () => {
     expect(result.created_at).not.toBeNull();
   });
 
-  it("returns null age for established token (1000 sigs)", async () => {
-    const sigs = Array.from({ length: 1000 }, (_, i) => ({
+  it("returns null age for established token (100 sigs)", async () => {
+    const sigs = Array.from({ length: 100 }, (_, i) => ({
       blockTime: Math.floor(Date.now() / 1000) - i * 60,
     }));
     conn.getSignaturesForAddress.mockResolvedValue(sigs);

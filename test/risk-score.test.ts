@@ -192,11 +192,25 @@ describe("computeRiskScore", () => {
   });
 
   // --- Metadata ---
-  it("adds 10 for mutable metadata", () => {
+  it("adds 10 for mutable metadata (< 2 maturity signals)", () => {
     const result = computeRiskScore(
       makeInput({ metadata: makeMetadata({ mutable: true }) }),
     );
+    // Default input: 1 signal (distributed only) → full +10 penalty
     expect(result.risk_score).toBe(10);
+  });
+
+  it("reduces mutable metadata penalty to 5 for established tokens (2+ signals)", () => {
+    const result = computeRiskScore(
+      makeInput({
+        metadata: makeMetadata({ mutable: true }),
+        holders: makeHolders({ top_10_percentage: 15 }),
+        liquidity: makeLiquidity({ liquidity_rating: "DEEP" }),
+        tokenAge: makeAge({ token_age_hours: null, created_at: null }),
+      }),
+    );
+    // 3 signals (deep + established + distributed) → +5 for metadata
+    expect(result.risk_score).toBe(5);
   });
 
   it("skips metadata scoring when check returned null", () => {
@@ -229,6 +243,20 @@ describe("computeRiskScore", () => {
   it("skips age scoring when check returned null", () => {
     const result = computeRiskScore(makeInput({ tokenAge: null }));
     expect(result.risk_score).toBe(0);
+  });
+
+  it("timeout in age check does not count as established (no maturity credit)", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({ mintAuthority: "UnknownAuth" }),
+        tokenAge: null, // timeout/failure case
+        holders: makeHolders({ top_10_percentage: 15 }),
+        liquidity: makeLiquidity({ liquidity_rating: "DEEP" }),
+      }),
+    );
+    // 2 signals (deep liq + distributed), NOT 3 (timeout ≠ established)
+    // mint authority with 2 signals → +5
+    expect(result.risk_score).toBe(5);
   });
 
   // --- Token-2022 extensions ---
@@ -443,8 +471,8 @@ describe("computeRiskScore", () => {
         tokenAge: makeAge({ token_age_hours: null, created_at: null }),
       }),
     );
-    // Both authorities trusted → +0, mutable metadata → +10, age null → +0
-    expect(result.risk_score).toBe(10);
+    // Both authorities trusted → +0, mutable metadata → +5 (3 maturity signals), age null → +0
+    expect(result.risk_score).toBe(5);
     expect(result.risk_level).toBe("LOW");
   });
 });

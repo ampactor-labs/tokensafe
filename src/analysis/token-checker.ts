@@ -151,7 +151,10 @@ export async function checkTokenLite(
       risk_score: result.risk_score,
       risk_level: result.risk_level,
       summary: result._summary ?? "No risk factors detected",
-      full_report: "Pay $0.015 via x402 at GET /v1/check?mint=" + mintAddress + " for the full detailed analysis",
+      full_report:
+        "Pay $0.005 via x402 at GET /v1/check?mint=" +
+        mintAddress +
+        " for the full detailed analysis",
     },
     fromCache,
   };

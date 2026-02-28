@@ -25,6 +25,7 @@ export interface LiquidityResult {
 
 const JUPITER_QUOTE_URL = "https://lite-api.jup.ag/swap/v1/quote";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
+const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 const RAYDIUM_AMM_V4 = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
 const RAYDIUM_AMM_V4_ACCOUNT_LEN = 752;
@@ -133,7 +134,9 @@ export async function checkLiquidity(
 async function fetchJupiterQuote(
   mintAddress: string,
 ): Promise<JupiterData | null> {
-  const url = `${JUPITER_QUOTE_URL}?inputMint=${mintAddress}&outputMint=${SOL_MINT}&amount=1000000&slippageBps=500`;
+  // wSOL special case: can't quote wSOL→SOL (same token), pair with USDC instead
+  const pairMint = mintAddress === SOL_MINT ? USDC_MINT : SOL_MINT;
+  const url = `${JUPITER_QUOTE_URL}?inputMint=${mintAddress}&outputMint=${pairMint}&amount=1000000&slippageBps=500`;
   const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
 
   if (!response.ok) return null;
@@ -177,9 +180,7 @@ function deriveRating(
  *
  * Returns null if the pool type is unsupported or data can't be read.
  */
-async function detectLpLock(
-  poolAddress: string,
-): Promise<LpLockResult | null> {
+async function detectLpLock(poolAddress: string): Promise<LpLockResult | null> {
   const connection = getConnection();
   const poolPubkey = new PublicKey(poolAddress);
 
@@ -200,10 +201,7 @@ async function detectLpLock(
   const accounts = largestAccounts.value;
   if (accounts.length === 0) return null;
 
-  const totalVisible = accounts.reduce(
-    (sum, a) => sum + BigInt(a.amount),
-    0n,
-  );
+  const totalVisible = accounts.reduce((sum, a) => sum + BigInt(a.amount), 0n);
   if (totalVisible === 0n) return null;
 
   // 3. Batch-read top 5 token accounts to find their owners
