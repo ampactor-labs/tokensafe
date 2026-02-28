@@ -1,4 +1,5 @@
 export type ErrorCode =
+  | "MISSING_REQUIRED_PARAM"
   | "INVALID_MINT_ADDRESS"
   | "TOKEN_NOT_FOUND"
   | "RPC_ERROR"
@@ -7,6 +8,7 @@ export type ErrorCode =
   | "INTERNAL_ERROR";
 
 const STATUS_MAP: Record<ErrorCode, number> = {
+  MISSING_REQUIRED_PARAM: 400,
   INVALID_MINT_ADDRESS: 400,
   TOKEN_NOT_FOUND: 404,
   RPC_ERROR: 503,

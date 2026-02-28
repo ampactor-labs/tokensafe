@@ -98,10 +98,13 @@ function makeLiteResult(
     degraded: false,
     is_token_2022: false,
     has_risky_extensions: false,
-    full_report:
-      "Pay $0.001 via x402 at GET /v1/check?mint=" +
-      WSOL +
-      " for the full detailed analysis",
+    full_report: {
+      url: `/v1/check?mint=${WSOL}`,
+      price_usd: "$0.008",
+      payment_protocol: "x402",
+      includes:
+        "authority addresses, holder breakdown, LP lock status, honeypot details, delta detection",
+    },
     ...overrides,
   };
   return { result, fromCache: false };
@@ -235,7 +238,7 @@ describe("GET /v1/check", () => {
   it("returns 400 for missing mint param", async () => {
     const res = await request(app).get("/v1/check");
     expect(res.status).toBe(400);
-    expect(res.body.error.code).toBe("INVALID_MINT_ADDRESS");
+    expect(res.body.error.code).toBe("MISSING_REQUIRED_PARAM");
   });
 
   it("returns 400 for invalid mint address", async () => {
@@ -307,7 +310,9 @@ describe("GET /v1/check/lite", () => {
     expect(res.body.risk_score).toBe(15);
     expect(res.body.risk_level).toBe("LOW");
     expect(res.body.summary).toBeDefined();
-    expect(res.body.full_report).toContain("/v1/check");
+    expect(res.body.full_report.url).toContain("/v1/check");
+    expect(res.body.full_report.price_usd).toBe("$0.008");
+    expect(res.body.full_report.payment_protocol).toBe("x402");
   });
 
   it("does not include detailed checks in lite response", async () => {
@@ -321,7 +326,7 @@ describe("GET /v1/check/lite", () => {
   it("returns 400 for missing mint param", async () => {
     const res = await request(app).get("/v1/check/lite");
     expect(res.status).toBe(400);
-    expect(res.body.error.code).toBe("INVALID_MINT_ADDRESS");
+    expect(res.body.error.code).toBe("MISSING_REQUIRED_PARAM");
   });
 
   it("returns 400 for invalid base58 mint without calling analysis", async () => {

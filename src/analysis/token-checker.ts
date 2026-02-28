@@ -98,6 +98,13 @@ export interface TokenCheckResult {
   alerts: MonitorAlert[];
 }
 
+export interface FullReportCTA {
+  url: string;
+  price_usd: string;
+  payment_protocol: string;
+  includes: string;
+}
+
 export interface TokenCheckLiteResult {
   mint: string;
   name: string | null;
@@ -108,7 +115,7 @@ export interface TokenCheckLiteResult {
   degraded: boolean;
   is_token_2022: boolean;
   has_risky_extensions: boolean;
-  full_report: string;
+  full_report: FullReportCTA;
 }
 
 export interface CheckTokenLiteResponse {
@@ -203,7 +210,13 @@ export async function checkTokenLite(
       degraded: result.degraded,
       is_token_2022: result.checks.is_token_2022,
       has_risky_extensions: hasRisky,
-      full_report: `Pay $0.008 via x402 at GET ${baseUrl || ""}/v1/check?mint=${mintAddress} for the full detailed analysis`,
+      full_report: {
+        url: `${baseUrl || ""}/v1/check?mint=${mintAddress}`,
+        price_usd: "$0.008",
+        payment_protocol: "x402",
+        includes:
+          "authority addresses, holder breakdown, LP lock status, honeypot details, delta detection",
+      },
     },
     fromCache,
   };

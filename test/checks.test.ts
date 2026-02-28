@@ -999,7 +999,9 @@ describe("checkTokenLite", () => {
     expect(result.degraded).toBe(false);
     expect(result.is_token_2022).toBe(false);
     expect(result.has_risky_extensions).toBe(false);
-    expect(result.full_report).toContain("/v1/check?mint=");
+    expect(result.full_report.url).toContain("/v1/check?mint=");
+    expect(result.full_report.price_usd).toBe("$0.008");
+    expect(result.full_report.payment_protocol).toBe("x402");
   });
 
   it("has_risky_extensions is false when extensions is null", async () => {
@@ -1096,17 +1098,18 @@ describe("checkTokenLite", () => {
   it("full_report includes baseUrl when provided", async () => {
     mockGetCached.mockReturnValue(makeFullResult());
     const { result } = await checkTokenLite(MINT, "https://api.example.com");
-    expect(result.full_report).toContain(
-      "https://api.example.com/v1/check?mint=",
+    expect(result.full_report.url).toBe(
+      `https://api.example.com/v1/check?mint=${MINT}`,
     );
-    expect(result.full_report).toContain("$0.008");
+    expect(result.full_report.price_usd).toBe("$0.008");
+    expect(result.full_report.payment_protocol).toBe("x402");
   });
 
   it("full_report omits baseUrl when not provided", async () => {
     mockGetCached.mockReturnValue(makeFullResult());
     const { result } = await checkTokenLite(MINT);
-    expect(result.full_report).toContain("/v1/check?mint=");
-    expect(result.full_report).not.toContain("https://");
+    expect(result.full_report.url).toBe(`/v1/check?mint=${MINT}`);
+    expect(result.full_report.url).not.toContain("https://");
   });
 
   it("propagates fromCache correctly", async () => {

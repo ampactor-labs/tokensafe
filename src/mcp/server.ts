@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { PublicKey } from "@solana/web3.js";
-import { checkToken, checkTokenLite } from "../analysis/token-checker.js";
+import { checkTokenLite } from "../analysis/token-checker.js";
 
 function validateMint(address: string): void {
   try {
@@ -38,7 +38,7 @@ export function createMcpServer(): McpServer {
     "solana_token_safety_check",
     {
       description:
-        "Full safety analysis for any Solana SPL token. Returns mint/freeze authority status, top holder concentration, liquidity depth and LP lock status, sell-side honeypot detection with tax estimation, metadata mutability, token age, Token-2022 extension risks (transfer fees, permanent delegate), and a composite risk score 0-100. Direct on-chain analysis via RPC — no third-party security APIs, no opaque ML. Use before buying, swapping, or providing liquidity.",
+        "Preview safety analysis for any Solana SPL token. Returns risk score (0-100), risk level, and summary. Full report with authority addresses, holder breakdown, LP lock status, honeypot details, and change detection requires x402 payment ($0.008 USDC) via the REST API at GET /v1/check?mint=<address>.",
       inputSchema: {
         mint_address: z
           .string()
@@ -47,7 +47,7 @@ export function createMcpServer(): McpServer {
     },
     async ({ mint_address }) => {
       validateMint(mint_address);
-      const { result } = await checkToken(mint_address);
+      const { result } = await checkTokenLite(mint_address);
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result) }],
       };
