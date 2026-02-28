@@ -1034,7 +1034,7 @@ describe("checkTokenLite", () => {
     expect(result.full_report).toContain(
       "https://api.example.com/v1/check?mint=",
     );
-    expect(result.full_report).toContain("$0.001");
+    expect(result.full_report).toContain("$0.008");
   });
 
   it("full_report omits baseUrl when not provided", async () => {

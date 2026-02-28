@@ -187,7 +187,7 @@ export async function checkTokenLite(
       degraded: result.degraded,
       is_token_2022: result.checks.is_token_2022,
       has_risky_extensions: hasRisky,
-      full_report: `Pay $0.001 via x402 at GET ${baseUrl || ""}/v1/check?mint=${mintAddress} for the full detailed analysis`,
+      full_report: `Pay $0.008 via x402 at GET ${baseUrl || ""}/v1/check?mint=${mintAddress} for the full detailed analysis`,
     },
     fromCache,
   };
