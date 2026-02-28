@@ -248,21 +248,21 @@ async function main() {
     const parsed = JSON.parse(data!.replace("data: ", ""));
     const names = parsed.result.tools.map((t: { name: string }) => t.name);
     assert(
-      names.includes("solana_token_safety_preview"),
-      `missing solana_token_safety_preview, got: ${names.join(", ")}`,
+      names.includes("solana_token_safety_check"),
+      `missing solana_token_safety_check, got: ${names.join(", ")}`,
     );
     assert(
-      names.includes("solana_token_safety_lite"),
-      `missing solana_token_safety_lite, got: ${names.join(", ")}`,
+      !names.includes("solana_token_safety_preview"),
+      "deprecated solana_token_safety_preview still present",
     );
     assert(
-      !names.includes("solana_token_safety_check"),
-      "old tool name solana_token_safety_check still present",
+      !names.includes("solana_token_safety_lite"),
+      "deprecated solana_token_safety_lite still present",
     );
   });
 
   await check(
-    "MCP preview tool returns lite data with absolute URL",
+    "MCP check tool returns lite data with absolute URL",
     async () => {
       const res = await fetch(`${BASE}/mcp`, {
         method: "POST",
@@ -272,7 +272,7 @@ async function main() {
           id: 2,
           method: "tools/call",
           params: {
-            name: "solana_token_safety_preview",
+            name: "solana_token_safety_check",
             arguments: { mint_address: WSOL },
           },
         }),
@@ -303,7 +303,7 @@ async function main() {
         id: 3,
         method: "tools/call",
         params: {
-          name: "solana_token_safety_lite",
+          name: "solana_token_safety_check",
           arguments: { mint_address: "not-a-valid-mint" },
         },
       }),

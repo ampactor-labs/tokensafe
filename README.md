@@ -52,7 +52,7 @@ Any x402-compatible wallet/client handles the payment flow automatically. $0.008
 claude mcp add tokensafe --transport http https://tokensafe-production.up.railway.app/mcp
 ```
 
-Two tools: `solana_token_safety_lite` (free) and `solana_token_safety_preview` (free preview + upgrade CTA).
+One tool: `solana_token_safety_check` — free risk score, summary, and Token-2022 detection. Full report via x402 REST API.
 
 ### Discovery
 
