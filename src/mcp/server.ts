@@ -54,40 +54,18 @@ export function createMcpServer(baseUrl: string = ""): McpServer {
   });
 
   server.registerTool(
-    "solana_token_safety_lite",
+    "solana_token_safety_check",
     {
-      title: "Solana Token Safety — Free Lite Check",
+      title: "Solana Token Safety Check",
       description:
-        "Quick free safety check for any Solana SPL token. Returns risk score (0-100), risk level, and a human-readable summary. Same analysis engine as the full check but without detailed per-check breakdowns. Use for fast screening before deciding whether to pay for a full report via the x402 REST API.",
+        "Free safety check for any Solana SPL token. Returns risk score (0-100), risk level, summary, name, symbol, Token-2022 detection, and risky extension flag. Full report with authority addresses, holder breakdown, LP lock status, honeypot details, and change detection available via x402 payment ($0.008 USDC) at GET /v1/check?mint=<address>.",
       inputSchema: {
         mint_address: z
           .string()
           .describe("Solana token mint address in base58 format"),
       },
       annotations: {
-        title: "Solana Token Safety — Free Lite Check",
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
-    },
-    async ({ mint_address }) => handleToolCall(mint_address, baseUrl),
-  );
-
-  server.registerTool(
-    "solana_token_safety_preview",
-    {
-      title: "Solana Token Safety — Preview (Full Report via x402)",
-      description:
-        "Preview safety analysis for any Solana SPL token. Returns risk score (0-100), risk level, and summary. Full report with authority addresses, holder breakdown, LP lock status, honeypot details, and change detection requires x402 payment ($0.008 USDC) via the REST API at GET /v1/check?mint=<address>.",
-      inputSchema: {
-        mint_address: z
-          .string()
-          .describe("Solana token mint address in base58 format"),
-      },
-      annotations: {
-        title: "Solana Token Safety — Preview (Full Report via x402)",
+        title: "Solana Token Safety Check",
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,

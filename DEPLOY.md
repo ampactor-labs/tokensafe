@@ -248,19 +248,14 @@ Without these, no agent finds you. These are machine-readable registrations — 
 
 ### 6.1 MCP Registries (smithery.ai + mcp.so)
 
-Register **two** MCP tools using `src/mcp/tool-definition.json`:
+Register MCP tool from `src/mcp/tool-definition.json`:
 
-**Tool 1: `solana_token_safety_preview`**
-- Endpoint: `GET /v1/check?mint={mint_address}`
-- Price: $0.008 USDC via x402
+**`solana_token_safety_check`**
+- Free (rate-limited 10/min per IP)
+- Returns: risk score, risk level, summary, name, symbol, Token-2022 detection, risky extension flag, full report link
 - Keywords in description: safe to trade, rug pull, mint authority, freeze authority, liquidity, honeypot, risk score, Token-2022, delta detection, alerts
 
-**Tool 2: `solana_token_safety_lite`**
-- Endpoint: `GET /v1/check/lite?mint={mint_address}`
-- Price: Free
-- Keywords: quick check, risk score, free, screening
-
-The descriptions in `tool-definition.json` are optimized for LLM pattern-matching. The agent's model reads these descriptions to decide whether to invoke the tool — specific, concrete terms matter more than marketing language.
+The description in `tool-definition.json` is optimized for LLM pattern-matching. The agent's model reads it to decide whether to invoke the tool — specific, concrete terms matter more than marketing language.
 
 **smithery.ai:** [smithery.ai](https://smithery.ai) — submit via their web form or CLI.
 
