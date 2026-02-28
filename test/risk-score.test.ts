@@ -3,6 +3,7 @@ import {
   computeRiskScore,
   getRiskFactors,
   generateRiskSummary,
+  getMaturitySignals,
   type RiskScoreInput,
 } from "../src/analysis/risk-score.js";
 import type { MintAccountResult } from "../src/analysis/checks/mint-authority.js";
@@ -215,7 +216,11 @@ describe("computeRiskScore", () => {
         metadata: makeMetadata({ mutable: true }),
         holders: makeHolders({ top_10_percentage: 15 }),
         liquidity: makeLiquidity({ liquidity_rating: "DEEP" }),
-        tokenAge: makeAge({ token_age_hours: null, created_at: null }),
+        tokenAge: makeAge({
+          token_age_hours: 720,
+          created_at: "2025-01-01T00:00:00.000Z",
+          established: true,
+        }),
       }),
     );
     // 3 signals (deep + established + distributed) → +5 for metadata
@@ -382,6 +387,34 @@ describe("computeRiskScore", () => {
     expect(result.risk_score).toBe(15);
   });
 
+  it("adds 5 for sell tax > 0% and <= 10% (200 bps)", () => {
+    const result = computeRiskScore(
+      makeInput({ honeypot: makeHoneypot({ sell_tax_bps: 200 }) }),
+    );
+    expect(result.risk_score).toBe(5);
+  });
+
+  it("adds 5 for sell tax = 500 bps", () => {
+    const result = computeRiskScore(
+      makeInput({ honeypot: makeHoneypot({ sell_tax_bps: 500 }) }),
+    );
+    expect(result.risk_score).toBe(5);
+  });
+
+  it("adds 15 for sell tax = 1001 bps (boundary)", () => {
+    const result = computeRiskScore(
+      makeInput({ honeypot: makeHoneypot({ sell_tax_bps: 1001 }) }),
+    );
+    expect(result.risk_score).toBe(15);
+  });
+
+  it("adds 0 for sell tax = 0 bps (noise floor)", () => {
+    const result = computeRiskScore(
+      makeInput({ honeypot: makeHoneypot({ sell_tax_bps: 0 }) }),
+    );
+    expect(result.risk_score).toBe(0);
+  });
+
   it("skips honeypot scoring when null", () => {
     const result = computeRiskScore(makeInput({ honeypot: null }));
     expect(result.risk_score).toBe(0);
@@ -505,7 +538,11 @@ describe("computeRiskScore", () => {
         mint: makeMint({ mintAuthority: "UnknownAuthority" }),
         holders: makeHolders({ top_10_percentage: 15 }),
         liquidity: makeLiquidity({ liquidity_rating: "DEEP" }),
-        tokenAge: makeAge({ token_age_hours: null, created_at: null }),
+        tokenAge: makeAge({
+          token_age_hours: 720,
+          created_at: "2025-01-01T00:00:00.000Z",
+          established: true,
+        }),
       }),
     );
     // 3 maturity signals (deep liquidity, established, distributed) → +5
@@ -517,7 +554,11 @@ describe("computeRiskScore", () => {
       makeInput({
         mint: makeMint({ freezeAuthority: "UnknownAuthority" }),
         holders: makeHolders({ top_10_percentage: 15 }),
-        tokenAge: makeAge({ token_age_hours: null, created_at: null }),
+        tokenAge: makeAge({
+          token_age_hours: 720,
+          created_at: "2025-01-01T00:00:00.000Z",
+          established: true,
+        }),
       }),
     );
     // 2 maturity signals (established, distributed) → +3
@@ -534,12 +575,38 @@ describe("computeRiskScore", () => {
         holders: makeHolders({ top_10_percentage: 12 }),
         liquidity: makeLiquidity({ liquidity_rating: "DEEP" }),
         metadata: makeMetadata({ mutable: true }),
-        tokenAge: makeAge({ token_age_hours: null, created_at: null }),
+        tokenAge: makeAge({
+          token_age_hours: 8760,
+          created_at: "2024-01-01T00:00:00.000Z",
+          established: true,
+        }),
       }),
     );
     // Both authorities trusted → +0, mutable metadata → +5 (3 maturity signals), age null → +0
     expect(result.risk_score).toBe(5);
     expect(result.risk_level).toBe("LOW");
+  });
+
+  it("skips mint authority penalty for PYUSD (Paxos)", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          mintAuthority: "8Jornc27vtAYPkwDzsZVgLQchAYyC8nD7aCNPCDV8Qk2",
+        }),
+      }),
+    );
+    expect(result.risk_score).toBe(0);
+  });
+
+  it("skips freeze authority penalty for PYUSD (Paxos)", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          freezeAuthority: "2apBGMsS6ti9RyF5TwQTDswXBWskiJP2LD4cUEDqYJjk",
+        }),
+      }),
+    );
+    expect(result.risk_score).toBe(0);
   });
 });
 
@@ -672,6 +739,23 @@ describe("generateRiskSummary", () => {
     );
     expect(summary).toBe("No risk factors detected");
   });
+
+  it("omits 'mutable metadata' from summary for mature tokens", () => {
+    const summary = generateRiskSummary(
+      makeInput({
+        metadata: makeMetadata({ mutable: true }),
+        holders: makeHolders({ top_10_percentage: 15 }),
+        liquidity: makeLiquidity({ liquidity_rating: "DEEP" }),
+        tokenAge: makeAge({
+          token_age_hours: 720,
+          created_at: "2025-01-01T00:00:00.000Z",
+          established: true,
+        }),
+      }),
+    );
+    expect(summary).not.toContain("mutable metadata");
+    expect(summary).toBe("No risk factors detected");
+  });
 });
 
 describe("getRiskFactors", () => {
@@ -700,5 +784,33 @@ describe("getRiskFactors", () => {
     const factors = getRiskFactors(input);
     const summary = generateRiskSummary(input);
     expect(summary).toBe(factors.join(", "));
+  });
+
+  it("suppresses 'mutable metadata' when maturitySignals >= 2", () => {
+    const factors = getRiskFactors(
+      makeInput({
+        metadata: makeMetadata({ mutable: true }),
+        holders: makeHolders({ top_10_percentage: 15 }),
+        liquidity: makeLiquidity({ liquidity_rating: "DEEP" }),
+        tokenAge: makeAge({
+          token_age_hours: 720,
+          created_at: "2025-01-01T00:00:00.000Z",
+          established: true,
+        }),
+      }),
+    );
+    expect(factors).not.toContain("mutable metadata");
+  });
+
+  it("includes 'mutable metadata' when maturitySignals < 2", () => {
+    const factors = getRiskFactors(
+      makeInput({
+        metadata: makeMetadata({ mutable: true }),
+        holders: makeHolders({ top_10_percentage: 0 }),
+        liquidity: null,
+        tokenAge: null,
+      }),
+    );
+    expect(factors).toContain("mutable metadata");
   });
 });

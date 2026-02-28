@@ -33,7 +33,7 @@ export async function fetchQuote(
   amount: string,
 ): Promise<JupiterQuote | null> {
   const url = `${JUPITER_QUOTE_URL}?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=500`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+  const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
   if (!res.ok) return null;
 
   const data = await res.json();
@@ -55,7 +55,7 @@ export async function fetchQuote(
  * Buy + sell round-trip via Jupiter (2 sequential HTTP calls).
  * Provides all data needed by both honeypot and liquidity analysis.
  */
-export async function fetchRoundTrip(
+async function fetchRoundTripInner(
   mintAddress: string,
 ): Promise<JupiterRoundTrip> {
   // wSOL special case: can't quote SOL→SOL, use USDC as the pair instead
@@ -75,4 +75,21 @@ export async function fetchRoundTrip(
 
   const sellQuote = await fetchQuote(mintAddress, pairMint, buyQuote.outAmount);
   return { buyQuote, sellQuote, buyInputAmount: buyInputAmountBigint };
+}
+
+export async function fetchRoundTrip(
+  mintAddress: string,
+): Promise<JupiterRoundTrip> {
+  return Promise.race([
+    fetchRoundTripInner(mintAddress),
+    new Promise<JupiterRoundTrip>((_, reject) =>
+      setTimeout(() => reject(new Error("Jupiter round-trip timeout")), 6000),
+    ),
+  ]).catch(
+    (): JupiterRoundTrip => ({
+      buyQuote: null,
+      sellQuote: null,
+      buyInputAmount: 0n,
+    }),
+  );
 }

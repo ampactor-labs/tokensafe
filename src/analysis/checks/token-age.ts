@@ -6,6 +6,7 @@ export interface TokenAgeResult {
   token_age_hours: number | null;
   token_age_minutes: number | null;
   created_at: string | null;
+  established?: boolean;
 }
 
 export async function checkTokenAge(
@@ -36,12 +37,28 @@ export async function checkTokenAge(
       };
     }
 
-    // Established token: >100 txs means it's not new — skip age penalty
+    // Established token: 100 sigs returned means >100 txs total.
+    // Use oldest of returned sigs as minimum age lower bound.
     if (sigs.length === 100) {
+      const oldest = sigs[sigs.length - 1];
+      if (oldest.blockTime) {
+        const createdAt = new Date(oldest.blockTime * 1000);
+        const ageMs = Date.now() - createdAt.getTime();
+        return {
+          token_age_hours: Math.max(
+            0,
+            Math.round((ageMs / 3_600_000) * 100) / 100,
+          ),
+          token_age_minutes: Math.max(0, Math.round(ageMs / 60_000)),
+          created_at: createdAt.toISOString(),
+          established: true,
+        };
+      }
       return {
         token_age_hours: null,
         token_age_minutes: null,
         created_at: null,
+        established: true,
       };
     }
 

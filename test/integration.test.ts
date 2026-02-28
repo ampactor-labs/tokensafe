@@ -96,11 +96,16 @@ function makeLiteResult(
 ): CheckTokenLiteResponse {
   const result: TokenCheckLiteResult = {
     mint: WSOL,
+    name: "Wrapped SOL",
+    symbol: "SOL",
     risk_score: 15,
     risk_level: "LOW",
     summary: "No risk factors detected",
+    degraded: false,
+    is_token_2022: false,
+    has_risky_extensions: false,
     full_report:
-      "Pay $0.005 via x402 at GET /v1/check?mint=" +
+      "Pay $0.001 via x402 at GET /v1/check?mint=" +
       WSOL +
       " for the full detailed analysis",
     ...overrides,
@@ -300,8 +305,8 @@ describe("GET /v1/check/lite", () => {
     mockCheckTokenLite.mockResolvedValue(makeLiteResult());
     const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
     expect(res.body.checks).toBeUndefined();
-    expect(res.body.name).toBeUndefined();
-    expect(res.body.symbol).toBeUndefined();
+    expect(res.body.name).toBe("Wrapped SOL");
+    expect(res.body.symbol).toBe("SOL");
   });
 
   it("returns 400 for missing mint param", async () => {

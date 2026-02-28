@@ -74,6 +74,7 @@ export interface TokenCheckResult {
     honeypot: (HoneypotResult & { status: "OK" | "UNAVAILABLE" }) | null;
     token_age_hours: number | null;
     token_age_minutes: number | null;
+    created_at: string | null;
     token_program: string;
     is_token_2022: boolean;
     token_2022_extensions: ExtensionInfo[] | null;
@@ -83,15 +84,21 @@ export interface TokenCheckResult {
   risk_factors: string[];
   summary: string;
   degraded: boolean;
+  degraded_checks: string[];
   response_signature: string;
   signer_pubkey: string;
 }
 
 export interface TokenCheckLiteResult {
   mint: string;
+  name: string | null;
+  symbol: string | null;
   risk_score: number;
   risk_level: string;
   summary: string;
+  degraded: boolean;
+  is_token_2022: boolean;
+  has_risky_extensions: boolean;
   full_report: string;
 }
 
@@ -159,18 +166,28 @@ export async function checkToken(
 
 export async function checkTokenLite(
   mintAddress: string,
+  baseUrl?: string,
 ): Promise<CheckTokenLiteResponse> {
   const { result, fromCache } = await checkToken(mintAddress);
+  const extensions = result.checks.token_2022_extensions ?? [];
+  const hasRisky = extensions.some(
+    (e) =>
+      !!e.permanent_delegate ||
+      (e.transfer_fee_bps != null && e.transfer_fee_bps > 0) ||
+      !!e.transfer_hook_program,
+  );
   return {
     result: {
       mint: result.mint,
+      name: result.name,
+      symbol: result.symbol,
       risk_score: result.risk_score,
       risk_level: result.risk_level,
       summary: result.summary,
-      full_report:
-        "Pay $0.005 via x402 at GET /v1/check?mint=" +
-        mintAddress +
-        " for the full detailed analysis",
+      degraded: result.degraded,
+      is_token_2022: result.checks.is_token_2022,
+      has_risky_extensions: hasRisky,
+      full_report: `Pay $0.001 via x402 at GET ${baseUrl || ""}/v1/check?mint=${mintAddress} for the full detailed analysis`,
     },
     fromCache,
   };
@@ -258,29 +275,56 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
       ? "Top holder may be an AMM vault (token has active liquidity)"
       : null;
 
+  // Token-2022 embedded metadata fallback (pump.fun tokens use this instead of Metaplex)
+  const tokenMetadataExt = mintData.extensions.find(
+    (e) => e.name === "TokenMetadata",
+  );
+
+  // Build effective metadata for risk scoring: prefer Metaplex, fall back to Token-2022
+  const SYSTEM_PROGRAM = "11111111111111111111111111111111";
+  let effectiveMetadata = metadata;
+  if (!metadata && tokenMetadataExt) {
+    const mutable =
+      tokenMetadataExt.update_authority != null &&
+      tokenMetadataExt.update_authority !== SYSTEM_PROGRAM;
+    effectiveMetadata = {
+      name: tokenMetadataExt.token_name ?? null,
+      symbol: tokenMetadataExt.token_symbol ?? null,
+      update_authority: tokenMetadataExt.update_authority ?? null,
+      mutable,
+      has_uri: !!tokenMetadataExt.token_uri,
+      uri: tokenMetadataExt.token_uri ?? null,
+      risk: mutable ? "WARNING" : "SAFE",
+      status: "OK",
+    };
+  }
+
   const riskInput = {
     mint: mintData,
     holders,
     liquidity,
-    metadata,
+    metadata: effectiveMetadata,
     tokenAge,
     honeypot,
   };
   const { risk_score, risk_level } = computeRiskScore(riskInput);
   const risk_factors = getRiskFactors(riskInput);
   const summary = generateRiskSummary(riskInput);
-  const degraded =
-    holders.status === "UNAVAILABLE" ||
-    liquidity === null ||
-    metadata === null ||
-    honeypot === null;
+
+  // Degraded = which checks couldn't run. Token-2022 metadata counts as metadata.
+  const degradedChecks: string[] = [];
+  if (holders.status === "UNAVAILABLE") degradedChecks.push("top_holders");
+  if (liquidity === null) degradedChecks.push("liquidity");
+  if (metadata === null && !tokenMetadataExt) degradedChecks.push("metadata");
+  if (honeypot === null) degradedChecks.push("honeypot");
+  const degraded = degradedChecks.length > 0;
 
   const checked_at = new Date().toISOString();
 
   return {
     mint: mintAddress,
-    name: metadata?.name ?? null,
-    symbol: metadata?.symbol ?? null,
+    name: metadata?.name ?? tokenMetadataExt?.token_name ?? null,
+    symbol: metadata?.symbol ?? tokenMetadataExt?.token_symbol ?? null,
     checked_at,
     cached_at: null,
     risk_score,
@@ -302,19 +346,20 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
       },
       top_holders: { ...holders, note: holderNote },
       liquidity,
-      metadata: metadata
+      metadata: effectiveMetadata
         ? {
-            status: metadata.status,
-            update_authority: metadata.update_authority,
-            mutable: metadata.mutable,
-            has_uri: metadata.has_uri,
-            uri: metadata.uri,
-            risk: metadata.risk,
+            status: effectiveMetadata.status,
+            update_authority: effectiveMetadata.update_authority,
+            mutable: effectiveMetadata.mutable,
+            has_uri: effectiveMetadata.has_uri,
+            uri: effectiveMetadata.uri,
+            risk: effectiveMetadata.risk,
           }
         : null,
       honeypot,
       token_age_hours: tokenAge?.token_age_hours ?? null,
       token_age_minutes: tokenAge?.token_age_minutes ?? null,
+      created_at: tokenAge?.created_at ?? null,
       token_program: mintData.tokenProgram,
       is_token_2022: mintData.isToken2022,
       token_2022_extensions:
@@ -325,6 +370,7 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
     risk_factors,
     summary,
     degraded,
+    degraded_checks: degradedChecks,
     response_signature: signResponse({
       mint: mintAddress,
       checked_at,

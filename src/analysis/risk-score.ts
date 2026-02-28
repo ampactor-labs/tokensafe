@@ -38,6 +38,8 @@ const TRUSTED_MINT_AUTHORITIES = new Set([
   "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS",
   // SolBlaze bSOL stake pool — verified from mainnet getAccountInfo
   "6WecYymEARvjG5ZyqkrVQ6YkhPfujNzWpSPwNKXHCbV2",
+  // Paxos PYUSD mint authority — verified from mainnet getAccountInfo
+  "8Jornc27vtAYPkwDzsZVgLQchAYyC8nD7aCNPCDV8Qk2",
 ]);
 
 /**
@@ -49,26 +51,32 @@ const TRUSTED_FREEZE_AUTHORITIES = new Set([
   "7dGbd2QZcCKcTndnHcTL8q7SMVXAkp688NTQYwrRCrar",
   // Tether USDT freeze authority — verified from mainnet getAccountInfo
   "Q6XprfkF8RQQKoQVG33xT88H7wi8Uk1B1CC7YAs69Gi",
+  // Paxos PYUSD freeze authority — verified from mainnet getAccountInfo
+  "2apBGMsS6ti9RyF5TwQTDswXBWskiJP2LD4cUEDqYJjk",
 ]);
+
+export function getMaturitySignals(input: RiskScoreInput): number {
+  const hasDeepLiquidity =
+    input.liquidity?.liquidity_rating === "DEEP" ||
+    (input.liquidity?.price_impact_pct != null &&
+      input.liquidity.price_impact_pct < 1.0);
+  const isEstablished = input.tokenAge?.established === true;
+  const isDistributed =
+    input.holders.top_10_percentage > 0 && input.holders.top_10_percentage < 30;
+  return (
+    (hasDeepLiquidity ? 1 : 0) +
+    (isEstablished ? 1 : 0) +
+    (isDistributed ? 1 : 0)
+  );
+}
 
 export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
   let score = 0;
 
   // Maturity signals reduce authority penalties for institutional tokens
-  const hasDeepLiquidity =
-    input.liquidity?.liquidity_rating === "DEEP" ||
-    (input.liquidity?.price_impact_pct != null &&
-      input.liquidity.price_impact_pct < 1.0);
-  // Established = age check succeeded but couldn't determine precise age (>100 txs).
+  // Established = token has 100+ transactions (set by token-age check).
   // RPC timeout (tokenAge === null) does NOT count as established.
-  const isEstablished =
-    input.tokenAge !== null && input.tokenAge.token_age_hours === null;
-  const isDistributed =
-    input.holders.top_10_percentage > 0 && input.holders.top_10_percentage < 30;
-  const maturitySignals =
-    (hasDeepLiquidity ? 1 : 0) +
-    (isEstablished ? 1 : 0) +
-    (isDistributed ? 1 : 0);
+  const maturitySignals = getMaturitySignals(input);
 
   // Mint authority
   if (input.mint.mintAuthority !== null) {
@@ -112,8 +120,12 @@ export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
   // Metadata mutability (context-aware: established tokens need mutable metadata)
   if (input.metadata?.mutable) score += maturitySignals >= 2 ? 5 : 10;
 
-  // Token age
-  if (input.tokenAge?.token_age_hours !== null && input.tokenAge) {
+  // Token age — skip established tokens (100+ txs = clearly not new)
+  if (
+    input.tokenAge?.token_age_hours !== null &&
+    input.tokenAge &&
+    !input.tokenAge.established
+  ) {
     const ageHours = input.tokenAge.token_age_hours!;
     if (ageHours < 1) score += 10;
     else if (ageHours < 24) score += 5;
@@ -141,11 +153,9 @@ export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
     } else if (input.honeypot.can_sell === null) {
       score += 10; // No Jupiter route — unknown, flag uncertainty
     }
-    if (
-      input.honeypot.sell_tax_bps != null &&
-      input.honeypot.sell_tax_bps > 1000
-    ) {
-      score += 15;
+    if (input.honeypot.sell_tax_bps != null) {
+      if (input.honeypot.sell_tax_bps > 1000) score += 15;
+      else if (input.honeypot.sell_tax_bps > 0) score += 5;
     }
   }
 
@@ -182,14 +192,17 @@ export function getRiskFactors(input: RiskScoreInput): string[] {
     input.liquidity.lp_locked === false
   )
     flags.push("LP not locked");
-  if (input.metadata?.mutable) flags.push("mutable metadata");
+  if (input.metadata?.mutable && getMaturitySignals(input) < 2)
+    flags.push("mutable metadata");
   if (
     input.tokenAge?.token_age_hours != null &&
+    !input.tokenAge.established &&
     input.tokenAge.token_age_hours < 1
   )
     flags.push("token < 1 hour old");
   else if (
     input.tokenAge?.token_age_hours != null &&
+    !input.tokenAge.established &&
     input.tokenAge.token_age_hours < 24
   )
     flags.push("token < 24 hours old");

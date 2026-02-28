@@ -64,6 +64,21 @@ app.use((req, res, next) => {
   next();
 });
 
+// 2b. Request-level timeout — hard ceiling so no single request blocks forever
+app.use((req, res, next) => {
+  req.setTimeout(15_000, () => {
+    if (!res.headersSent) {
+      res.status(504).json({
+        error: {
+          code: "TIMEOUT",
+          message: "Request timed out after 15 seconds",
+        },
+      });
+    }
+  });
+  next();
+});
+
 // 3. x402 discovery document — enables x402scan auto-registration
 app.get("/.well-known/x402", (_req, res) => {
   const base = `${_req.protocol}://${_req.get("host")}`;
@@ -119,6 +134,7 @@ app.get("/health", healthRateLimiter, (_req, res) => {
     cache: cacheStats(),
     monitorCache: monitorCacheStats(),
     signer_pubkey: getSignerPubkey(),
+    facilitator_url: config.facilitatorUrl,
     api_versions: {
       v1: {
         status: "active",
@@ -149,7 +165,8 @@ app.get("/v1/check/lite", liteRateLimiter, async (req, res, next) => {
       );
     }
 
-    const { result, fromCache } = await checkTokenLite(mint);
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const { result, fromCache } = await checkTokenLite(mint, baseUrl);
     res.setHeader("X-Cache", fromCache ? "HIT" : "MISS");
     res.json(result);
   } catch (err) {

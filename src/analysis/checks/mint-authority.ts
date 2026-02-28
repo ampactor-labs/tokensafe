@@ -15,6 +15,10 @@ export interface ExtensionInfo {
   transfer_fee_bps?: number;
   permanent_delegate?: string | null;
   transfer_hook_program?: string | null;
+  token_name?: string;
+  token_symbol?: string;
+  token_uri?: string;
+  update_authority?: string;
 }
 
 export interface MintAccountResult {
@@ -96,12 +100,16 @@ function parseExtensions(data: Buffer): ExtensionInfo[] {
     const typeId = data.readUInt16LE(offset);
     const length = data.readUInt16LE(offset + 2);
     const valueStart = offset + 4;
-    offset = valueStart + length;
+    const paddingLen = length % 4 === 0 ? 0 : 4 - (length % 4);
+    offset = valueStart + length + paddingLen;
 
-    if (typeId === 0 && length === 0) break; // end of TLV
+    if (typeId === 0) continue;
 
     const name = EXTENSION_NAMES[typeId];
-    if (!name) continue;
+    if (!name) {
+      extensions.push({ name: `Unknown(${typeId})` });
+      continue;
+    }
 
     const ext: ExtensionInfo = { name };
 
@@ -125,6 +133,35 @@ function parseExtensions(data: Buffer): ExtensionInfo[] {
       const programId = new PublicKey(programBytes);
       const isZero = programId.equals(PublicKey.default);
       ext.transfer_hook_program = isZero ? null : programId.toBase58();
+    } else if (typeId === 19) {
+      // TokenMetadata: update_authority(32) + mint(32) + name(borsh) + symbol(borsh) + uri(borsh)
+      try {
+        const ua = new PublicKey(
+          data.subarray(valueStart, valueStart + 32),
+        ).toBase58();
+        ext.update_authority = ua;
+        let pos = valueStart + 64; // skip update_authority + mint
+        const readStr = (p: number): [string, number] => {
+          if (p + 4 > valueStart + length) return ["", p];
+          const len = data.readUInt32LE(p);
+          if (p + 4 + len > valueStart + length || len > 10_000)
+            return ["", p + 4];
+          const s = data
+            .subarray(p + 4, p + 4 + len)
+            .toString("utf8")
+            .replace(/\0/g, "")
+            .trim();
+          return [s, p + 4 + len];
+        };
+        const [tName, p1] = readStr(pos);
+        const [tSymbol, p2] = readStr(p1);
+        const [tUri] = readStr(p2);
+        if (tName) ext.token_name = tName;
+        if (tSymbol) ext.token_symbol = tSymbol;
+        if (tUri) ext.token_uri = tUri;
+      } catch {
+        /* corrupt TokenMetadata — still report extension exists */
+      }
     }
 
     extensions.push(ext);

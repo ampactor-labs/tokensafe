@@ -5,6 +5,8 @@ import { PublicKey } from "@solana/web3.js";
 
 vi.mock("../src/solana/rpc.js", () => ({
   getConnection: vi.fn(),
+  reportRpcFailure: vi.fn(),
+  reportRpcSuccess: vi.fn(),
 }));
 
 vi.mock("@solana/spl-token", () => ({
@@ -13,6 +15,28 @@ vi.mock("@solana/spl-token", () => ({
 
 vi.mock("../src/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+vi.mock("../src/utils/cache.js", () => ({
+  getCached: vi.fn(),
+  setCached: vi.fn(),
+  getInflight: vi.fn(),
+  setInflight: vi.fn(),
+  getNegativeCached: vi.fn(),
+  setNegativeCached: vi.fn(),
+  cacheStats: vi.fn(() => ({
+    size: 0,
+    maxSize: 10000,
+    hits: 0,
+    misses: 0,
+    hitRate: "0%",
+  })),
+  clearCache: vi.fn(),
+}));
+
+vi.mock("../src/utils/response-signer.js", () => ({
+  signResponse: vi.fn(() => "mock-signature"),
+  getSignerPubkey: vi.fn(() => "mock-pubkey"),
 }));
 
 // ── Imports (after mocks) ───────────────────────────────────────────
@@ -25,7 +49,13 @@ import { checkLiquidity } from "../src/analysis/checks/liquidity.js";
 import { checkMetadata } from "../src/analysis/checks/metadata.js";
 import { checkTokenAge } from "../src/analysis/checks/token-age.js";
 import { analyzeHoneypot } from "../src/analysis/checks/honeypot.js";
-import { BUY_AMOUNT_LAMPORTS_BIGINT } from "../src/analysis/checks/jupiter.js";
+import {
+  BUY_AMOUNT_LAMPORTS_BIGINT,
+  fetchRoundTrip,
+} from "../src/analysis/checks/jupiter.js";
+import { checkTokenLite } from "../src/analysis/token-checker.js";
+import { getCached } from "../src/utils/cache.js";
+import type { TokenCheckResult } from "../src/analysis/token-checker.js";
 
 // ── Test constants ──────────────────────────────────────────────────
 
@@ -99,6 +129,9 @@ function buildToken2022Data(
     header.writeUInt16LE(ext.typeId, 0);
     header.writeUInt16LE(ext.value.length, 2);
     tlvParts.push(header, ext.value);
+    const paddingLen =
+      ext.value.length % 4 === 0 ? 0 : 4 - (ext.value.length % 4);
+    if (paddingLen > 0) tlvParts.push(Buffer.alloc(paddingLen));
   }
   return Buffer.concat([base, ...tlvParts]);
 }
@@ -262,6 +295,113 @@ describe("checkMintAccount", () => {
     const result = await checkMintAccount(MINT);
     expect(result.isToken2022).toBe(true);
     expect(result.extensions).toEqual([]);
+  });
+
+  it("parses multiple extensions with alignment padding", async () => {
+    const metaPtr = Buffer.alloc(64); // MetadataPointer (typeId=18)
+    const transferFee = Buffer.alloc(108); // TransferFeeConfig (typeId=1)
+    transferFee.writeUInt16LE(300, 106); // 3% fee
+    const data = buildToken2022Data([
+      { typeId: 18, value: metaPtr },
+      { typeId: 1, value: transferFee },
+    ]);
+
+    conn.getAccountInfoAndContext.mockResolvedValue({
+      value: { owner: new PublicKey(TOKEN_2022_PROGRAM), data },
+      context: { slot: 300000010 },
+    });
+    (getMint as Mock).mockResolvedValue({
+      mintAuthority: null,
+      freezeAuthority: null,
+      supply: 0n,
+      decimals: 0,
+    });
+
+    const result = await checkMintAccount(MINT);
+    expect(result.extensions).toHaveLength(2);
+    expect(result.extensions.map((e) => e.name)).toContain("MetadataPointer");
+    expect(result.extensions.map((e) => e.name)).toContain("TransferFeeConfig");
+    const tfExt = result.extensions.find((e) => e.name === "TransferFeeConfig");
+    expect(tfExt!.transfer_fee_bps).toBe(300);
+  });
+
+  it("extracts name/symbol/uri from TokenMetadata extension", async () => {
+    const parts: Buffer[] = [];
+    parts.push(SOME_PUBKEY.toBuffer()); // update_authority
+    parts.push(Buffer.alloc(32)); // mint
+    const borshStr = (s: string) => {
+      const bytes = Buffer.from(s, "utf8");
+      const len = Buffer.alloc(4);
+      len.writeUInt32LE(bytes.length);
+      return Buffer.concat([len, bytes]);
+    };
+    parts.push(borshStr("PumpToken"));
+    parts.push(borshStr("PUMP"));
+    parts.push(borshStr("https://pump.fun/meta.json"));
+    const metadataValue = Buffer.concat(parts);
+    const data = buildToken2022Data([{ typeId: 19, value: metadataValue }]);
+
+    conn.getAccountInfoAndContext.mockResolvedValue({
+      value: { owner: new PublicKey(TOKEN_2022_PROGRAM), data },
+      context: { slot: 300000011 },
+    });
+    (getMint as Mock).mockResolvedValue({
+      mintAuthority: null,
+      freezeAuthority: null,
+      supply: 1000000n,
+      decimals: 6,
+    });
+
+    const result = await checkMintAccount(MINT);
+    expect(result.extensions).toHaveLength(1);
+    const tmExt = result.extensions[0];
+    expect(tmExt.name).toBe("TokenMetadata");
+    expect(tmExt.token_name).toBe("PumpToken");
+    expect(tmExt.token_symbol).toBe("PUMP");
+    expect(tmExt.token_uri).toBe("https://pump.fun/meta.json");
+    expect(tmExt.update_authority).toBe(SOME_PUBKEY.toBase58());
+  });
+
+  it("parses pump.fun token (MetadataPointer + TokenMetadata)", async () => {
+    const metaPtr = Buffer.alloc(64); // MetadataPointer (typeId=18)
+    const parts: Buffer[] = [];
+    parts.push(SOME_PUBKEY.toBuffer()); // update_authority
+    parts.push(Buffer.alloc(32)); // mint
+    const borshStr = (s: string) => {
+      const bytes = Buffer.from(s, "utf8");
+      const len = Buffer.alloc(4);
+      len.writeUInt32LE(bytes.length);
+      return Buffer.concat([len, bytes]);
+    };
+    parts.push(borshStr("DogCoin"));
+    parts.push(borshStr("DOG"));
+    parts.push(borshStr("https://arweave.net/dog"));
+    const metadataValue = Buffer.concat(parts);
+
+    const data = buildToken2022Data([
+      { typeId: 18, value: metaPtr },
+      { typeId: 19, value: metadataValue },
+    ]);
+
+    conn.getAccountInfoAndContext.mockResolvedValue({
+      value: { owner: new PublicKey(TOKEN_2022_PROGRAM), data },
+      context: { slot: 300000012 },
+    });
+    (getMint as Mock).mockResolvedValue({
+      mintAuthority: SOME_PUBKEY,
+      freezeAuthority: null,
+      supply: 1000000000n,
+      decimals: 9,
+    });
+
+    const result = await checkMintAccount(MINT);
+    expect(result.extensions).toHaveLength(2);
+    const tm = result.extensions.find((e) => e.name === "TokenMetadata")!;
+    expect(tm.token_name).toBe("DogCoin");
+    expect(tm.token_symbol).toBe("DOG");
+    expect(tm.token_uri).toBe("https://arweave.net/dog");
+    expect(result.isToken2022).toBe(true);
+    expect(result.mintAuthority).toBe(SOME_PUBKEY.toBase58());
   });
 });
 
@@ -534,15 +674,38 @@ describe("checkTokenAge", () => {
     expect(result.token_age_minutes).toBeLessThanOrEqual(11);
   });
 
-  it("returns null age for established token (100 sigs)", async () => {
+  it("returns minimum age + established flag for 100-sig token", async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
     const sigs = Array.from({ length: 100 }, (_, i) => ({
-      blockTime: Math.floor(Date.now() / 1000) - i * 60,
+      blockTime: nowSec - i * 60,
     }));
     conn.getSignaturesForAddress.mockResolvedValue(sigs);
     const result = await checkTokenAge(MINT);
+    expect(result.established).toBe(true);
+    // Oldest sig is ~99 minutes ago
+    expect(result.token_age_minutes).toBeGreaterThanOrEqual(95);
+    expect(result.token_age_minutes).toBeLessThanOrEqual(105);
+    expect(result.token_age_hours).not.toBeNull();
+    expect(result.created_at).not.toBeNull();
+  });
+
+  it("returns established=true with null age when oldest 100-sig has no blockTime", async () => {
+    const sigs = Array.from({ length: 100 }, () => ({ blockTime: null }));
+    conn.getSignaturesForAddress.mockResolvedValue(sigs);
+    const result = await checkTokenAge(MINT);
+    expect(result.established).toBe(true);
     expect(result.token_age_hours).toBeNull();
-    expect(result.token_age_minutes).toBeNull();
     expect(result.created_at).toBeNull();
+  });
+
+  it("does not set established flag for < 100 sig tokens", async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    conn.getSignaturesForAddress.mockResolvedValue([
+      { blockTime: nowSec },
+      { blockTime: nowSec - 7200 },
+    ]);
+    const result = await checkTokenAge(MINT);
+    expect(result.established).toBeUndefined();
   });
 
   it("returns null age when RPC throws", async () => {
@@ -652,5 +815,238 @@ describe("analyzeHoneypot", () => {
     const result = analyzeHoneypot(buyQ, sellQ, buyAmount);
     expect(result.sell_tax_bps).toBeGreaterThan(1000);
     expect(result.risk).toBe("DANGEROUS");
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// 7. fetchRoundTrip — 6s ceiling
+// ════════════════════════════════════════════════════════════════════
+
+describe("fetchRoundTrip", () => {
+  it("returns empty trip when both quotes timeout", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve(new Response(JSON.stringify({}))), 10000),
+          ),
+      );
+
+    const result = await fetchRoundTrip(
+      "SomeMint111111111111111111111111111111111111",
+    );
+    expect(result.buyQuote).toBeNull();
+    expect(result.sellQuote).toBeNull();
+    expect(result.buyInputAmount).toBe(0n);
+
+    globalThis.fetch = originalFetch;
+  }, 10000);
+
+  it("resolves within 7s even when fetch is slow", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve(new Response(JSON.stringify({}))), 10000),
+          ),
+      );
+
+    const start = Date.now();
+    await fetchRoundTrip("SomeMint111111111111111111111111111111111111");
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(7000);
+
+    globalThis.fetch = originalFetch;
+  }, 10000);
+});
+
+// ════════════════════════════════════════════════════════════════════
+// 8. checkTokenLite — enriched fields + has_risky_extensions logic
+// ════════════════════════════════════════════════════════════════════
+
+const SPL_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+
+function makeFullResult(
+  overrides: Partial<TokenCheckResult> = {},
+): TokenCheckResult {
+  return {
+    mint: MINT,
+    name: "TestToken",
+    symbol: "TST",
+    checked_at: "2026-02-28T00:00:00.000Z",
+    cached_at: null,
+    risk_score: 10,
+    risk_level: "LOW",
+    checks: {
+      mint_authority: { status: "RENOUNCED", authority: null, risk: "SAFE" },
+      freeze_authority: { status: "RENOUNCED", authority: null, risk: "SAFE" },
+      supply: { total: "1000000000", decimals: 9 },
+      top_holders: {
+        top_10_percentage: 10,
+        top_1_percentage: 2,
+        holder_count_estimate: 500,
+        top_holders_detail: null,
+        note: null,
+        risk: "SAFE",
+      },
+      liquidity: null,
+      metadata: null,
+      honeypot: null,
+      token_age_hours: 24,
+      token_age_minutes: 1440,
+      created_at: "2026-02-27T00:00:00.000Z",
+      token_program: SPL_TOKEN_PROGRAM_ID,
+      is_token_2022: false,
+      token_2022_extensions: null,
+    },
+    rpc_slot: 300000000,
+    methodology_version: "1.0.0",
+    risk_factors: [],
+    summary: "Low risk",
+    degraded: false,
+    degraded_checks: [],
+    response_signature: "mock-signature",
+    signer_pubkey: "mock-pubkey",
+    ...overrides,
+  };
+}
+
+describe("checkTokenLite", () => {
+  const mockGetCached = vi.mocked(getCached);
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns enriched fields from full result", async () => {
+    mockGetCached.mockReturnValue(makeFullResult());
+    const { result } = await checkTokenLite(MINT);
+    expect(result.mint).toBe(MINT);
+    expect(result.name).toBe("TestToken");
+    expect(result.symbol).toBe("TST");
+    expect(result.risk_score).toBe(10);
+    expect(result.risk_level).toBe("LOW");
+    expect(result.summary).toBe("Low risk");
+    expect(result.degraded).toBe(false);
+    expect(result.is_token_2022).toBe(false);
+    expect(result.has_risky_extensions).toBe(false);
+    expect(result.full_report).toContain("/v1/check?mint=");
+  });
+
+  it("has_risky_extensions is false when extensions is null", async () => {
+    mockGetCached.mockReturnValue(
+      makeFullResult({
+        checks: { ...makeFullResult().checks, token_2022_extensions: null },
+      }),
+    );
+    const { result } = await checkTokenLite(MINT);
+    expect(result.has_risky_extensions).toBe(false);
+  });
+
+  it("has_risky_extensions is false when extensions array is empty", async () => {
+    mockGetCached.mockReturnValue(
+      makeFullResult({
+        checks: { ...makeFullResult().checks, token_2022_extensions: [] },
+      }),
+    );
+    const { result } = await checkTokenLite(MINT);
+    expect(result.has_risky_extensions).toBe(false);
+  });
+
+  it("has_risky_extensions is true when permanent_delegate is set", async () => {
+    mockGetCached.mockReturnValue(
+      makeFullResult({
+        checks: {
+          ...makeFullResult().checks,
+          is_token_2022: true,
+          token_2022_extensions: [
+            {
+              name: "PermanentDelegate",
+              permanent_delegate: SOME_PUBKEY.toBase58(),
+            },
+          ],
+        },
+      }),
+    );
+    const { result } = await checkTokenLite(MINT);
+    expect(result.is_token_2022).toBe(true);
+    expect(result.has_risky_extensions).toBe(true);
+  });
+
+  it("has_risky_extensions is true when transfer_fee_bps > 0", async () => {
+    mockGetCached.mockReturnValue(
+      makeFullResult({
+        checks: {
+          ...makeFullResult().checks,
+          is_token_2022: true,
+          token_2022_extensions: [
+            { name: "TransferFeeConfig", transfer_fee_bps: 500 },
+          ],
+        },
+      }),
+    );
+    const { result } = await checkTokenLite(MINT);
+    expect(result.has_risky_extensions).toBe(true);
+  });
+
+  it("has_risky_extensions is false when transfer_fee_bps is 0", async () => {
+    mockGetCached.mockReturnValue(
+      makeFullResult({
+        checks: {
+          ...makeFullResult().checks,
+          is_token_2022: true,
+          token_2022_extensions: [
+            { name: "TransferFeeConfig", transfer_fee_bps: 0 },
+          ],
+        },
+      }),
+    );
+    const { result } = await checkTokenLite(MINT);
+    expect(result.has_risky_extensions).toBe(false);
+  });
+
+  it("has_risky_extensions is true when transfer_hook_program is set", async () => {
+    mockGetCached.mockReturnValue(
+      makeFullResult({
+        checks: {
+          ...makeFullResult().checks,
+          is_token_2022: true,
+          token_2022_extensions: [
+            {
+              name: "TransferHook",
+              transfer_hook_program: SOME_PUBKEY.toBase58(),
+            },
+          ],
+        },
+      }),
+    );
+    const { result } = await checkTokenLite(MINT);
+    expect(result.has_risky_extensions).toBe(true);
+  });
+
+  it("full_report includes baseUrl when provided", async () => {
+    mockGetCached.mockReturnValue(makeFullResult());
+    const { result } = await checkTokenLite(MINT, "https://api.example.com");
+    expect(result.full_report).toContain(
+      "https://api.example.com/v1/check?mint=",
+    );
+    expect(result.full_report).toContain("$0.001");
+  });
+
+  it("full_report omits baseUrl when not provided", async () => {
+    mockGetCached.mockReturnValue(makeFullResult());
+    const { result } = await checkTokenLite(MINT);
+    expect(result.full_report).toContain("/v1/check?mint=");
+    expect(result.full_report).not.toContain("https://");
+  });
+
+  it("propagates fromCache correctly", async () => {
+    mockGetCached.mockReturnValue(makeFullResult());
+    const { fromCache } = await checkTokenLite(MINT);
+    expect(fromCache).toBe(true);
   });
 });
