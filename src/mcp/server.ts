@@ -38,17 +38,38 @@ async function handleToolCall(
 }
 
 export function createMcpServer(baseUrl: string = ""): McpServer {
-  const server = new McpServer({ name: "tokensafe", version: "1.0.0" });
+  const server = new McpServer({
+    name: "tokensafe",
+    version: "1.0.0",
+    description:
+      "Solana token safety scanner. Risk score 0-100 from pure on-chain analysis — mint/freeze authority, holder concentration, liquidity, LP locks, honeypot detection, Token-2022 extensions. Free lite check or $0.008 USDC full report via x402.",
+    websiteUrl: "https://github.com/ampactor-labs/tokensafe",
+    icons: [
+      {
+        src: `${baseUrl || "https://tokensafe-production.up.railway.app"}/icon.svg`,
+        mimeType: "image/svg+xml",
+        sizes: ["any"],
+      },
+    ],
+  });
 
   server.registerTool(
     "solana_token_safety_lite",
     {
+      title: "Solana Token Safety — Free Lite Check",
       description:
         "Quick free safety check for any Solana SPL token. Returns risk score (0-100), risk level, and a human-readable summary. Same analysis engine as the full check but without detailed per-check breakdowns. Use for fast screening before deciding whether to pay for a full report via the x402 REST API.",
       inputSchema: {
         mint_address: z
           .string()
           .describe("Solana token mint address in base58 format"),
+      },
+      annotations: {
+        title: "Solana Token Safety — Free Lite Check",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
       },
     },
     async ({ mint_address }) => handleToolCall(mint_address, baseUrl),
@@ -57,12 +78,20 @@ export function createMcpServer(baseUrl: string = ""): McpServer {
   server.registerTool(
     "solana_token_safety_preview",
     {
+      title: "Solana Token Safety — Preview (Full Report via x402)",
       description:
         "Preview safety analysis for any Solana SPL token. Returns risk score (0-100), risk level, and summary. Full report with authority addresses, holder breakdown, LP lock status, honeypot details, and change detection requires x402 payment ($0.008 USDC) via the REST API at GET /v1/check?mint=<address>.",
       inputSchema: {
         mint_address: z
           .string()
           .describe("Solana token mint address in base58 format"),
+      },
+      annotations: {
+        title: "Solana Token Safety — Preview (Full Report via x402)",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
       },
     },
     async ({ mint_address }) => handleToolCall(mint_address, baseUrl),

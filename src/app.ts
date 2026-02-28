@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import { PublicKey } from "@solana/web3.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -15,6 +17,13 @@ import { createMcpServer } from "./mcp/server.js";
 export const app = express();
 app.set("trust proxy", 1);
 const startTime = Date.now();
+
+// Static icon for MCP registry metadata
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+app.use(
+  "/icon.svg",
+  express.static(path.join(__dirname, "../public/icon.svg")),
+);
 
 const healthRateLimiter = rateLimiter(config.rateLimitPerMinute);
 const paidRateLimiter = rateLimiter(config.rateLimitPerMinute);
