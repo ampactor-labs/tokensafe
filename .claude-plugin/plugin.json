@@ -1,0 +1,22 @@
+{
+  "name": "tokensafe",
+  "version": "1.0.0",
+  "description": "Solana token safety scanner — deterministic on-chain analysis, $0.008/request via x402 USDC micropayments. Checks mint/freeze authority, holder concentration, liquidity, LP locks, honeypot, metadata mutability, token age, and Token-2022 extensions.",
+  "author": {
+    "name": "Ampactor Labs",
+    "url": "https://github.com/ampactor-labs"
+  },
+  "homepage": "https://tokensafe-production.up.railway.app",
+  "repository": "https://github.com/ampactor-labs/tokensafe",
+  "license": "MIT",
+  "keywords": [
+    "solana",
+    "token-safety",
+    "rug-pull",
+    "x402",
+    "defi",
+    "risk-score",
+    "honeypot",
+    "mcp"
+  ]
+}
