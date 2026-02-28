@@ -143,7 +143,7 @@ app.get("/v1/check/lite", liteRateLimiter, async (req, res, next) => {
     const mint = req.query.mint as string | undefined;
     if (!mint) {
       throw new ApiError(
-        "INVALID_MINT_ADDRESS",
+        "MISSING_REQUIRED_PARAM",
         "Missing required query parameter: mint",
       );
     }
@@ -179,7 +179,7 @@ app.get("/v1/check", async (req, res, next) => {
     const mint = req.query.mint as string | undefined;
     if (!mint) {
       throw new ApiError(
-        "INVALID_MINT_ADDRESS",
+        "MISSING_REQUIRED_PARAM",
         "Missing required query parameter: mint",
       );
     }
