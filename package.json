@@ -12,6 +12,7 @@
     "wallet:generate": "tsx scripts/generate-test-wallet.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "@x402/core": "^2.5.0",
@@ -20,7 +21,8 @@
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "lru-cache": "^11.2.6",
-    "pino": "^10.3.1"
+    "pino": "^10.3.1",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@scure/base": "^2.0.0",

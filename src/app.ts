@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import express from "express";
 import { PublicKey } from "@solana/web3.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { config } from "./config.js";
 import { logger } from "./utils/logger.js";
 import { ApiError } from "./utils/errors.js";
@@ -11,6 +12,7 @@ import { cacheStats } from "./utils/cache.js";
 import { monitorCacheStats } from "./utils/monitor-cache.js";
 import { rateLimiter } from "./utils/rate-limit.js";
 import { getSignerPubkey } from "./utils/response-signer.js";
+import { createMcpServer } from "./mcp/server.js";
 
 export const app = express();
 app.set("trust proxy", 1);
@@ -299,6 +301,28 @@ app.get("/v1/monitor", async (req, res, next) => {
     res.json(response);
   } catch (err) {
     next(err);
+  }
+});
+
+// 10. MCP Streamable HTTP — stateless, free, rate-limited
+const mcpRateLimiter = rateLimiter(config.liteRateLimitPerMinute);
+app.post("/mcp", mcpRateLimiter, express.json(), async (req, res) => {
+  try {
+    const server = createMcpServer();
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  } catch (err) {
+    logger.error({ err }, "MCP request failed");
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: { code: -32603, message: "Internal server error" },
+        id: null,
+      });
+    }
   }
 });
 
