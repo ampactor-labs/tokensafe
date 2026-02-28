@@ -62,7 +62,22 @@ app.use((req, res, next) => {
   next();
 });
 
-// 3. Health endpoint — free, separate rate limiter
+// 3. x402 discovery document — enables x402scan auto-registration
+app.get("/.well-known/x402", (_req, res) => {
+  const base = `${_req.protocol}://${_req.get("host")}`;
+  res.json({
+    version: 1,
+    resources: [
+      `${base}/v1/check?mint=So11111111111111111111111111111111111111112`,
+      `${base}/v1/batch?mints=So11111111111111111111111111111111111111112`,
+      `${base}/v1/monitor?mints=So11111111111111111111111111111111111111112`,
+    ],
+    instructions:
+      "Solana token safety scanner. Full check $0.005, batch (up to 10) $0.008, monitor $0.005. Free lite endpoint at /v1/check/lite. All prices in USDC via x402.",
+  });
+});
+
+// 4. Health endpoint — free, separate rate limiter
 app.get("/health", healthRateLimiter, (_req, res) => {
   res.json({
     status: "ok",
