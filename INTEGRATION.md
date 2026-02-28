@@ -25,7 +25,7 @@ TokenSafe uses the x402 protocol. No API keys, no accounts. Payment is authentic
 
 1. Agent sends `GET /v1/check?mint=<MINT>` with no auth headers
 2. Server returns `402 Payment Required` with `PAYMENT-REQUIRED` header containing payment details
-3. Agent's x402 client automatically signs a $0.005 USDC transfer
+3. Agent's x402 client automatically signs a USDC transfer for the requested price
 4. Agent retries the request with `PAYMENT-SIGNATURE` header
 5. Facilitator verifies and settles on-chain (~400ms)
 6. Server returns `200 OK` with token safety data
@@ -49,11 +49,11 @@ const keypairBytes = base58.decode(process.env.SVM_PRIVATE_KEY);
 const keypair = await createKeyPairSignerFromBytes(keypairBytes);
 ```
 
-Fund the wallet with USDC on Solana mainnet. Each check costs $0.005 USDC (5000 raw units, USDC has 6 decimals).
+Fund the wallet with USDC on Solana mainnet. Each check costs $0.008 USDC (8000 raw units, USDC has 6 decimals).
 
 ## Endpoints
 
-### `GET /v1/check?mint=<MINT>` — Full Safety Analysis ($0.005)
+### `GET /v1/check?mint=<MINT>` — Full Safety Analysis ($0.008)
 
 Returns comprehensive risk assessment for a single Solana token.
 
@@ -95,11 +95,11 @@ Returns comprehensive risk assessment for a single Solana token.
 
 ### `GET /v1/check/lite?mint=<MINT>` — Quick Screening (Free)
 
-Rate-limited to 10/min per IP. Returns `risk_score`, `risk_level`, `summary` only.
+Rate-limited to 10/min per IP. Returns `mint`, `name`, `symbol`, `risk_score`, `risk_level`, `summary`, `degraded`, `is_token_2022`, `has_risky_extensions`, and `full_report` (upsell to paid endpoint).
 
-### `GET /v1/batch?mints=<MINT1>,<MINT2>,...` — Batch Check ($0.008)
+### `GET /v1/batch?mints=<MINT1>,<MINT2>,...` — Batch Check ($0.04)
 
-Check up to 10 tokens at once. 20% cheaper than individual checks.
+Check up to 10 tokens at once. 50% discount at max 10 tokens vs individual checks.
 
 **Response:**
 
@@ -112,7 +112,7 @@ Check up to 10 tokens at once. 20% cheaper than individual checks.
 }
 ```
 
-### `GET /v1/monitor?mints=<MINT1>,<MINT2>,...` — Portfolio Monitor ($0.005)
+### `GET /v1/monitor?mints=<MINT1>,<MINT2>,...` — Portfolio Monitor ($0.008)
 
 Same as batch but includes delta detection — what changed since last check. Returns alerts for critical changes (authority activations, liquidity removals, score jumps).
 

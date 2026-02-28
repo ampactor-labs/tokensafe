@@ -1,7 +1,7 @@
 [
   {
     "name": "solana_token_safety_check",
-    "description": "Full safety analysis for any Solana SPL token. Returns mint/freeze authority status, top holder concentration, liquidity depth and LP lock status, sell-side honeypot detection with tax estimation, metadata mutability, token age, Token-2022 extension risks (transfer fees, permanent delegate), and a composite risk score 0-100. Direct on-chain analysis via RPC — no third-party security APIs, no opaque ML. Costs $0.005 USDC via x402. Use before buying, swapping, or providing liquidity.",
+    "description": "Full safety analysis for any Solana SPL token. Returns mint/freeze authority status, top holder concentration, liquidity depth and LP lock status, sell-side honeypot detection with tax estimation, metadata mutability, token age, Token-2022 extension risks (transfer fees, permanent delegate), and a composite risk score 0-100. Direct on-chain analysis via RPC — no third-party security APIs, no opaque ML. Costs $0.008 USDC via x402. Use before buying, swapping, or providing liquidity.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -29,7 +29,7 @@
   },
   {
     "name": "solana_token_batch_check",
-    "description": "Check up to 10 Solana tokens at once. Returns full safety analysis for each token — mint/freeze authority, top holders, liquidity, honeypot detection, metadata, token age, Token-2022 extensions, and risk score. 20% cheaper than individual checks at $0.008 USDC via x402. Use for portfolio screening, watchlist evaluation, or comparing multiple tokens.",
+    "description": "Check up to 10 Solana tokens at once. Returns full safety analysis for each token — mint/freeze authority, top holders, liquidity, honeypot detection, metadata, token age, Token-2022 extensions, and risk score. 50% discount vs individual checks at $0.04 USDC via x402 for up to 10 tokens. Use for portfolio screening, watchlist evaluation, or comparing multiple tokens.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -43,7 +43,7 @@
   },
   {
     "name": "solana_token_portfolio_monitor",
-    "description": "Monitor up to 10 Solana tokens at once. Returns current safety state for each token plus delta detection — what changed since the last check (authority changes, holder concentration shifts, liquidity movements, risk score changes). Generates severity-ranked alerts for critical changes like authority activations or liquidity removals. Costs $0.005 USDC via x402. Use for portfolio surveillance and automated risk alerts.",
+    "description": "Monitor up to 10 Solana tokens at once. Returns current safety state for each token plus delta detection — what changed since the last check (authority changes, holder concentration shifts, liquidity movements, risk score changes). Generates severity-ranked alerts for critical changes like authority activations or liquidity removals. Costs $0.008 USDC via x402. Use for portfolio surveillance and automated risk alerts.",
     "inputSchema": {
       "type": "object",
       "properties": {
