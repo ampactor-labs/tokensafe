@@ -85,7 +85,19 @@ async function main() {
     assert(typeof body.risk_score === "number", "missing risk_score");
     assert(typeof body.risk_level === "string", "missing risk_level");
     assert(typeof body.summary === "string", "missing summary");
-    assert(typeof body.full_report === "string", "missing full_report");
+    assert(
+      typeof body.full_report === "object" && body.full_report !== null,
+      "missing full_report object",
+    );
+    assert(typeof body.full_report.url === "string", "full_report missing url");
+    assert(
+      body.full_report.price_usd === "$0.008",
+      `full_report price expected $0.008, got ${body.full_report.price_usd}`,
+    );
+    assert(
+      body.full_report.payment_protocol === "x402",
+      "full_report missing payment_protocol",
+    );
     assert(
       !body.checks,
       "lite response should NOT include checks (that's the paid endpoint)",
@@ -102,10 +114,18 @@ async function main() {
     );
   });
 
-  await check("GET /v1/check/lite without mint → 400", async () => {
-    const res = await fetch(`${BASE}/v1/check/lite`);
-    assert(res.status === 400, `expected 400, got ${res.status}`);
-  });
+  await check(
+    "GET /v1/check/lite without mint → 400 MISSING_REQUIRED_PARAM",
+    async () => {
+      const res = await fetch(`${BASE}/v1/check/lite`);
+      assert(res.status === 400, `expected 400, got ${res.status}`);
+      const body = await res.json();
+      assert(
+        body.error?.code === "MISSING_REQUIRED_PARAM",
+        `expected MISSING_REQUIRED_PARAM, got ${body.error?.code}`,
+      );
+    },
+  );
 
   await check("X-Cache header present on lite", async () => {
     const res = await fetch(`${BASE}/v1/check/lite?mint=${WSOL}`);
@@ -116,6 +136,40 @@ async function main() {
     );
   });
 
+  // --- Real token (not just wSOL) ---
+  console.log("\nReal tokens:");
+
+  const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  await check("GET /v1/check/lite USDC → 200 LOW risk", async () => {
+    const res = await fetch(`${BASE}/v1/check/lite?mint=${USDC}`);
+    assert(res.status === 200, `expected 200, got ${res.status}`);
+    const body = await res.json();
+    assert(body.risk_level === "LOW", `expected LOW, got ${body.risk_level}`);
+    assert(body.symbol === "USDC", `expected USDC, got ${body.symbol}`);
+  });
+
+  // --- Lite endpoint does NOT leak paid fields ---
+  console.log("\nPaywall integrity:");
+
+  await check(
+    "Lite response has no checks/changes/alerts/rpc_slot",
+    async () => {
+      const res = await fetch(`${BASE}/v1/check/lite?mint=${WSOL}`);
+      const body = await res.json();
+      assert(!body.checks, "lite leaks checks");
+      assert(body.changes === undefined, "lite leaks changes");
+      assert(body.alerts === undefined, "lite leaks alerts");
+      assert(body.rpc_slot === undefined, "lite leaks rpc_slot");
+      assert(
+        body.response_signature === undefined,
+        "lite leaks response_signature",
+      );
+      assert(body.risk_factors === undefined, "lite leaks risk_factors");
+      assert(body.checked_at === undefined, "lite leaks checked_at");
+      assert(body.degraded_checks === undefined, "lite leaks degraded_checks");
+    },
+  );
+
   // --- x402 gate ---
   console.log("\nx402 payment gate:");
 
@@ -124,6 +178,49 @@ async function main() {
     assert(res.status === 402, `expected 402, got ${res.status}`);
     const pr = res.headers.get("payment-required");
     assert(pr !== null && pr.length > 0, "missing PAYMENT-REQUIRED header");
+  });
+
+  await check("402 PAYMENT-REQUIRED contains $0.008 price", async () => {
+    const res = await fetch(`${BASE}/v1/check?mint=${WSOL}`);
+    const pr = res.headers.get("payment-required");
+    assert(pr !== null, "missing header");
+    const decoded = JSON.parse(Buffer.from(pr!, "base64").toString());
+    // x402 v2 nests pricing under accepts[]
+    const accept = decoded.accepts?.[0];
+    assert(accept !== undefined, "missing accepts[0] in payment requirements");
+    assert(
+      accept.amount === "8000",
+      `expected amount=8000, got ${accept.amount}`,
+    );
+    assert(
+      accept.scheme === "exact",
+      `expected scheme=exact, got ${accept.scheme}`,
+    );
+  });
+
+  await check(
+    "GET /v1/check without mint → 402 (x402 gate fires first)",
+    async () => {
+      const res = await fetch(`${BASE}/v1/check`);
+      // x402 middleware fires before param validation, so 402 is expected
+      assert(
+        res.status === 402,
+        `expected 402 (x402 gate fires before validation), got ${res.status}`,
+      );
+    },
+  );
+
+  // --- Discovery ---
+  console.log("\nDiscovery:");
+
+  await check("GET /.well-known/x402 → 200 JSON", async () => {
+    const res = await fetch(`${BASE}/.well-known/x402`);
+    assert(res.status === 200, `expected 200, got ${res.status}`);
+    const body = await res.json();
+    assert(
+      body.resources && body.resources.length > 0,
+      "missing resources in discovery doc",
+    );
   });
 
   // --- Error handling ---
@@ -136,6 +233,19 @@ async function main() {
     assert(
       body.error?.code === "NOT_FOUND",
       `expected NOT_FOUND, got ${body.error?.code}`,
+    );
+  });
+
+  await check("Removed endpoints → 404", async () => {
+    const res1 = await fetch(`${BASE}/v1/batch?mints=${WSOL}`);
+    assert(
+      res1.status === 404,
+      `expected 404 for /v1/batch, got ${res1.status}`,
+    );
+    const res2 = await fetch(`${BASE}/v1/monitor?mints=${WSOL}`);
+    assert(
+      res2.status === 404,
+      `expected 404 for /v1/monitor, got ${res2.status}`,
     );
   });
 
