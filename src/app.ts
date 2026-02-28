@@ -196,7 +196,8 @@ app.get("/v1/check", async (req, res, next) => {
 const mcpRateLimiter = rateLimiter(config.liteRateLimitPerMinute);
 app.post("/mcp", mcpRateLimiter, express.json(), async (req, res) => {
   try {
-    const server = createMcpServer();
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const server = createMcpServer(baseUrl);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
     });

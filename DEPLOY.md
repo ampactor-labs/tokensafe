@@ -250,7 +250,7 @@ Without these, no agent finds you. These are machine-readable registrations — 
 
 Register **two** MCP tools using `src/mcp/tool-definition.json`:
 
-**Tool 1: `solana_token_safety_check`**
+**Tool 1: `solana_token_safety_preview`**
 - Endpoint: `GET /v1/check?mint={mint_address}`
 - Price: $0.008 USDC via x402
 - Keywords in description: safe to trade, rug pull, mint authority, freeze authority, liquidity, honeypot, risk score, Token-2022, delta detection, alerts
