@@ -19,7 +19,7 @@
 npm install && npm test && npx tsc --noEmit
 ```
 
-144 tests pass (42 risk-score + 31 checks + 27 delta + 18 liquidity + 26 integration). Tests mock x402 and RPC — no network or wallet needed.
+153 tests pass (49 risk-score + 33 checks + 27 delta + 18 liquidity + 26 integration). Tests mock x402 and RPC — no network or wallet needed.
 
 ---
 
@@ -77,7 +77,7 @@ curl http://localhost:3000/health
 curl -i "http://localhost:3000/v1/check?mint=So11111111111111111111111111111111111111112"
 ```
 
-Should return 402 with `PAYMENT-REQUIRED` header containing price ($0.015 USDC), devnet CAIP-2 network, and your treasury wallet.
+Should return 402 with `PAYMENT-REQUIRED` header containing price ($0.005 USDC), devnet CAIP-2 network, and your treasury wallet.
 
 ```bash
 curl "http://localhost:3000/v1/check/lite?mint=So11111111111111111111111111111111111111112"
@@ -154,7 +154,7 @@ Go to [faucet.solana.com](https://faucet.solana.com) → select Devnet → paste
 
 Go to [faucet.circle.com](https://faucet.circle.com) → select **Solana** → select **Devnet** → paste the address. Deposits devnet USDC (mint: `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`).
 
-1 USDC = 66 full checks ($0.015) or 200 monitor calls ($0.005).
+1 USDC = 200 checks ($0.005) or 200 monitor calls ($0.005).
 
 ### 4.3 Fund treasury wallet with devnet USDC
 
@@ -182,7 +182,7 @@ To test a specific mint:
 SVM_PRIVATE_KEY=<YOUR_BASE58_KEYPAIR> npx tsx scripts/x402-client.ts EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
 ```
 
-The test client only tests `GET /v1/check` (the $0.015 paid endpoint). The monitor endpoint (`GET /v1/monitor`) uses the same x402 flow at $0.005 — if check works, monitor works.
+The test client only tests `GET /v1/check` (the $0.005 paid endpoint). The monitor endpoint (`GET /v1/monitor`) uses the same x402 flow at $0.005 — if check works, monitor works.
 
 ### 4.5 Expected output
 
@@ -214,7 +214,7 @@ SVM_PRIVATE_KEY=<YOUR_BASE58_KEYPAIR> SMOKE_URL=https://<your-railway-domain> np
 
 - [ ] Smoke test passes locally (`npm run test:smoke`)
 - [ ] 402 response has `PAYMENT-REQUIRED` header
-- [ ] `/v1/check` payment amount = 15000 ($0.015 USDC, 6 decimals)
+- [ ] `/v1/check` payment amount = 5000 ($0.005 USDC, 6 decimals)
 - [ ] `/v1/monitor` payment amount = 5000 ($0.005 USDC, 6 decimals)
 - [ ] `payTo` in payment requirements matches `TREASURY_WALLET_ADDRESS`
 - [ ] Network = `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` (devnet CAIP-2)
@@ -232,7 +232,7 @@ SVM_PRIVATE_KEY=<YOUR_BASE58_KEYPAIR> SMOKE_URL=https://<your-railway-domain> np
 1. Update Railway env vars: set `SOLANA_NETWORK=mainnet`. Railway auto-redeploys.
 2. Fund your treasury wallet with a tiny amount of **mainnet** USDC (any amount — the ATA needs to exist). Send from Phantom or any wallet.
 3. Re-run smoke test against Railway — verify 402 response shows mainnet CAIP-2 (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`) and mainnet USDC mint.
-4. Full payment test on mainnet: generate a new wallet (`npm run wallet:generate`), fund with real SOL + real USDC, run `npm run test:x402`. Cost: $0.015 + ~$0.001 tx fee.
+4. Full payment test on mainnet: generate a new wallet (`npm run wallet:generate`), fund with real SOL + real USDC, run `npm run test:x402`. Cost: $0.005 + ~$0.001 tx fee.
 
 ---
 
@@ -244,7 +244,7 @@ Without these, no agent finds you. These are machine-readable registrations — 
 
 | Endpoint | Method | Price | Auth | Description |
 |---|---|---|---|---|
-| `/v1/check` | GET | $0.015 USDC | x402 | Full token safety analysis with all checks |
+| `/v1/check` | GET | $0.005 USDC | x402 | Full token safety analysis with all checks |
 | `/v1/check/lite` | GET | Free | None (rate-limited) | Risk score + summary, no detailed checks |
 | `/v1/monitor` | GET | $0.005 USDC | x402 | Portfolio monitor for up to 10 tokens with delta detection |
 | `/health` | GET | Free | None | Server status, version, cache stats |
@@ -255,7 +255,7 @@ Register **three** MCP tools using `src/mcp/tool-definition.json`:
 
 **Tool 1: `solana_token_safety_check`**
 - Endpoint: `GET /v1/check?mint={mint_address}`
-- Price: $0.015 USDC via x402
+- Price: $0.005 USDC via x402
 - Keywords in description: safe to trade, rug pull, mint authority, freeze authority, liquidity, honeypot, risk score, Token-2022
 
 **Tool 2: `solana_token_safety_lite`**
@@ -283,10 +283,10 @@ Listing copy:
 ```
 Name: TokenSafe
 URL: https://<your-railway-domain>
-Description: Cheapest transparent Solana token safety scanner — deterministic on-chain analysis, $0.015/check or free lite tier. Mint/freeze authority, holder concentration, liquidity depth, LP locks, honeypot detection, sell tax estimation, Token-2022 risks. No API keys, no accounts. Pay per request in USDC via x402.
+Description: Cheapest transparent Solana token safety scanner — deterministic on-chain analysis, $0.005/check or free lite tier. Mint/freeze authority, holder concentration, liquidity depth, LP locks, honeypot detection, sell tax estimation, Token-2022 risks. No API keys, no accounts. Pay per request in USDC via x402.
 Category: Security / Analytics
 Network: Solana
-Price: $0.015/check (full), $0.005/monitor, free (lite)
+Price: $0.005/check (full), $0.005/monitor, free (lite)
 Payment: USDC on Solana via x402
 ```
 
@@ -310,7 +310,7 @@ Submit manually at [x402scan](https://x402scan.com) for inclusion. No automatic 
 
 **Key differentiators to emphasize everywhere:**
 
-1. **Cheapest:** $0.015/check full, free lite tier. Rug Munch charges $0.02-$2.00.
+1. **Cheapest:** $0.005/check full, free lite tier. Rug Munch charges $0.02-$2.00.
 2. **Transparent:** Every risk point traceable to on-chain state. No opaque ML scoring.
 3. **Direct on-chain:** Zero dependency on GoPlus, RugCheck, or any third-party security API.
 4. **Free tier:** `/v1/check/lite` gives agents a zero-cost way to screen tokens before paying for the full report.
@@ -326,7 +326,7 @@ Submit manually at [x402scan](https://x402scan.com) for inclusion. No automatic 
 | `npm run dev` | `tsx watch src/index.ts` | Dev server with hot reload + pino-pretty logs |
 | `npm run build` | `tsc` | Compile to `dist/` |
 | `npm start` | `node dist/index.js` | Production server |
-| `npm test` | `vitest run` | 144 tests (mocked, no network) |
+| `npm test` | `vitest run` | 153 tests (mocked, no network) |
 | `npm run test:smoke` | `tsx scripts/smoke.ts` | Smoke test against running server |
 | `npm run test:x402` | `tsx scripts/x402-client.ts` | x402 paid request test |
 | `npm run wallet:generate` | `tsx scripts/generate-test-wallet.ts` | Generate Solana test keypair |

@@ -79,13 +79,18 @@ function makeResult(overrides?: Partial<TokenCheckResult>): CheckTokenResponse {
   return { result, fromCache: false };
 }
 
-function makeLiteResult(overrides?: Partial<TokenCheckLiteResult>): CheckTokenLiteResponse {
+function makeLiteResult(
+  overrides?: Partial<TokenCheckLiteResult>,
+): CheckTokenLiteResponse {
   const result: TokenCheckLiteResult = {
     mint: WSOL,
     risk_score: 15,
     risk_level: "LOW",
     summary: "No risk factors detected",
-    full_report: "Pay $0.015 via x402 at GET /v1/check?mint=" + WSOL + " for the full detailed analysis",
+    full_report:
+      "Pay $0.005 via x402 at GET /v1/check?mint=" +
+      WSOL +
+      " for the full detailed analysis",
     ...overrides,
   };
   return { result, fromCache: false };
@@ -226,7 +231,9 @@ describe("GET /v1/check/lite", () => {
   });
 
   it("returns 400 for invalid base58 mint without calling analysis", async () => {
-    const res = await request(app).get("/v1/check/lite?mint=not-a-real-mint!!!");
+    const res = await request(app).get(
+      "/v1/check/lite?mint=not-a-real-mint!!!",
+    );
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe("INVALID_MINT_ADDRESS");
     // The key assertion: checkTokenLite should never be called for garbage input
@@ -313,9 +320,7 @@ describe("GET /v1/monitor", () => {
       ],
     });
     mockMonitorTokens.mockResolvedValue(multiResponse);
-    const res = await request(app).get(
-      `/v1/monitor?mints=${WSOL},${BONK}`,
-    );
+    const res = await request(app).get(`/v1/monitor?mints=${WSOL},${BONK}`);
     expect(res.status).toBe(200);
     expect(res.body.token_count).toBe(2);
     expect(res.body.tokens).toHaveLength(2);
@@ -399,9 +404,7 @@ describe("GET /v1/monitor", () => {
       ],
     });
     mockMonitorTokens.mockResolvedValue(partial);
-    const res = await request(app).get(
-      `/v1/monitor?mints=${WSOL},${BONK}`,
-    );
+    const res = await request(app).get(`/v1/monitor?mints=${WSOL},${BONK}`);
     expect(res.status).toBe(200);
     expect(res.body.tokens).toHaveLength(1);
     expect(res.body.errors).toHaveLength(1);
