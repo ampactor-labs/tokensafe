@@ -2,6 +2,8 @@ import { PublicKey } from "@solana/web3.js";
 import { getConnection } from "../../solana/rpc.js";
 import { logger } from "../../utils/logger.js";
 import type { JupiterQuote } from "./jupiter.js";
+// Note: Jupiter quoting is centralized in jupiter.ts (fetchRoundTrip).
+// checkLiquidity() always receives a pre-fetched quote from the orchestrator.
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -24,10 +26,6 @@ export interface LiquidityResult {
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-const JUPITER_QUOTE_URL = "https://lite-api.jup.ag/swap/v1/quote";
-const SOL_MINT = "So11111111111111111111111111111111111111112";
-const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 const RAYDIUM_AMM_V4 = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
 const RAYDIUM_AMM_V4_ACCOUNT_LEN = 752;
@@ -79,17 +77,13 @@ export async function checkLiquidity(
 ): Promise<LiquidityResult> {
   try {
     // Step 1: Jupiter quote — existence + depth (Level 1)
-    // Use pre-fetched quote from shared round-trip when available
-    const jupiter: JupiterData | null =
-      prefetchedQuote !== undefined
-        ? prefetchedQuote
-          ? {
-              primaryPool: prefetchedQuote.primaryPool,
-              poolAddress: prefetchedQuote.poolAddress,
-              priceImpactPct: prefetchedQuote.priceImpactPct,
-            }
-          : null
-        : await fetchJupiterQuote(mintAddress);
+    const jupiter: JupiterData | null = prefetchedQuote
+      ? {
+          primaryPool: prefetchedQuote.primaryPool,
+          poolAddress: prefetchedQuote.poolAddress,
+          priceImpactPct: prefetchedQuote.priceImpactPct,
+        }
+      : null;
     if (!jupiter) return noLiquidity();
 
     const rating = deriveRating(jupiter.priceImpactPct);
@@ -130,35 +124,6 @@ export async function checkLiquidity(
     logger.warn({ err, mintAddress }, "Jupiter liquidity check failed");
     return noLiquidity();
   }
-}
-
-// ---------------------------------------------------------------------------
-// Jupiter quote
-// ---------------------------------------------------------------------------
-
-async function fetchJupiterQuote(
-  mintAddress: string,
-): Promise<JupiterData | null> {
-  // wSOL special case: can't quote wSOL→SOL (same token), pair with USDC instead
-  const pairMint = mintAddress === SOL_MINT ? USDC_MINT : SOL_MINT;
-  const url = `${JUPITER_QUOTE_URL}?inputMint=${mintAddress}&outputMint=${pairMint}&amount=1000000&slippageBps=500`;
-  const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
-
-  if (!response.ok) return null;
-
-  const data = await response.json();
-  const routes = data.routePlan as
-    | Array<{ swapInfo?: { label?: string; ammKey?: string } }>
-    | undefined;
-
-  if (!routes || routes.length === 0) return null;
-
-  return {
-    primaryPool: routes[0]?.swapInfo?.label ?? null,
-    poolAddress: routes[0]?.swapInfo?.ammKey ?? null,
-    priceImpactPct:
-      data.priceImpactPct != null ? parseFloat(data.priceImpactPct) : null,
-  };
 }
 
 // ---------------------------------------------------------------------------

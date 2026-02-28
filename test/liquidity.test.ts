@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { PublicKey } from "@solana/web3.js";
+import type { JupiterQuote } from "../src/analysis/checks/jupiter.js";
 
 // Mock RPC
 vi.mock("../src/solana/rpc.js", () => ({
@@ -10,10 +11,6 @@ vi.mock("../src/solana/rpc.js", () => ({
 vi.mock("../src/utils/logger.js", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
-
-// Mock global fetch for Jupiter
-const mockFetch = vi.fn();
-vi.stubGlobal("fetch", mockFetch);
 
 import {
   checkLiquidity,
@@ -26,30 +23,14 @@ const mockGetConnection = vi.mocked(getConnection);
 const FAKE_MINT = "So11111111111111111111111111111111111111112";
 const RAYDIUM_AMM_V4 = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
 
-// Helper: build a Jupiter quote response
-function jupiterResponse(
-  overrides: {
-    label?: string;
-    ammKey?: string;
-    priceImpactPct?: string;
-  } = {},
-) {
+// Helper: build a prefetched JupiterQuote
+function makeQuote(overrides: Partial<JupiterQuote> = {}): JupiterQuote {
   return {
-    ok: true,
-    json: () =>
-      Promise.resolve({
-        routePlan: [
-          {
-            swapInfo: {
-              label: overrides.label ?? "Raydium",
-              ammKey:
-                overrides.ammKey ??
-                "PoolAddress111111111111111111111111111111111",
-            },
-          },
-        ],
-        priceImpactPct: overrides.priceImpactPct ?? "0.5",
-      }),
+    outAmount: overrides.outAmount ?? "1000000",
+    priceImpactPct: overrides.priceImpactPct ?? 0.5,
+    primaryPool: overrides.primaryPool ?? "Raydium",
+    poolAddress:
+      overrides.poolAddress ?? "PoolAddress111111111111111111111111111111111",
   };
 }
 
@@ -86,35 +67,28 @@ beforeEach(() => {
 
 describe("checkLiquidity", () => {
   // -------------------------------------------------------------------------
-  // Jupiter response scenarios
+  // Prefetched quote scenarios
   // -------------------------------------------------------------------------
 
-  it("returns noLiquidity when Jupiter returns non-ok response", async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 400 });
-    const result = await checkLiquidity(FAKE_MINT);
+  it("returns noLiquidity when prefetched quote is null", async () => {
+    const result = await checkLiquidity(FAKE_MINT, null);
     expect(result.has_liquidity).toBe(false);
     expect(result.risk).toBe("CRITICAL");
     expect(result.liquidity_rating).toBeNull();
   });
 
-  it("returns noLiquidity when Jupiter returns empty routePlan", async () => {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ routePlan: [] }),
-    });
+  it("returns noLiquidity when no quote provided", async () => {
     const result = await checkLiquidity(FAKE_MINT);
     expect(result.has_liquidity).toBe(false);
   });
 
-  it("extracts priceImpactPct, ammKey, and label from Jupiter", async () => {
-    mockFetch.mockResolvedValue(
-      jupiterResponse({
-        label: "Orca",
-        ammKey: "OrcaPool111111111111111111111111111111111111",
-        priceImpactPct: "2.5",
-      }),
-    );
-    const result = await checkLiquidity(FAKE_MINT);
+  it("extracts priceImpactPct, poolAddress, and primaryPool from quote", async () => {
+    const quote = makeQuote({
+      primaryPool: "Orca",
+      poolAddress: "OrcaPool111111111111111111111111111111111111",
+      priceImpactPct: 2.5,
+    });
+    const result = await checkLiquidity(FAKE_MINT, quote);
     expect(result.has_liquidity).toBe(true);
     expect(result.primary_pool).toBe("Orca");
     expect(result.pool_address).toBe(
@@ -125,20 +99,26 @@ describe("checkLiquidity", () => {
   });
 
   it("derives DEEP rating for price impact < 1%", async () => {
-    mockFetch.mockResolvedValue(jupiterResponse({ priceImpactPct: "0.3" }));
-    const result = await checkLiquidity(FAKE_MINT);
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({ priceImpactPct: 0.3 }),
+    );
     expect(result.liquidity_rating).toBe("DEEP");
   });
 
   it("derives SHALLOW rating for price impact 5-20%", async () => {
-    mockFetch.mockResolvedValue(jupiterResponse({ priceImpactPct: "12.0" }));
-    const result = await checkLiquidity(FAKE_MINT);
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({ priceImpactPct: 12.0 }),
+    );
     expect(result.liquidity_rating).toBe("SHALLOW");
   });
 
   it("derives NONE rating for price impact >= 20%", async () => {
-    mockFetch.mockResolvedValue(jupiterResponse({ priceImpactPct: "25.0" }));
-    const result = await checkLiquidity(FAKE_MINT);
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({ priceImpactPct: 25.0 }),
+    );
     expect(result.liquidity_rating).toBe("NONE");
   });
 
@@ -147,10 +127,10 @@ describe("checkLiquidity", () => {
   // -------------------------------------------------------------------------
 
   it("returns lp_locked=null for non-Raydium pool (Orca)", async () => {
-    mockFetch.mockResolvedValue(
-      jupiterResponse({ label: "Orca", ammKey: "OrcaPool1111" }),
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({ primaryPool: "Orca", poolAddress: "OrcaPool1111" }),
     );
-    const result = await checkLiquidity(FAKE_MINT);
     expect(result.lp_locked).toBeNull();
     expect(result.lp_lock_percentage).toBeNull();
   });
@@ -165,13 +145,7 @@ describe("checkLiquidity", () => {
       "strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m",
     );
     const tokenAccount = PublicKey.unique();
-
-    mockFetch.mockResolvedValue(
-      jupiterResponse({
-        label: "Raydium",
-        ammKey: PublicKey.unique().toBase58(),
-      }),
-    );
+    const poolAddr = PublicKey.unique().toBase58();
 
     const mockConnection = {
       getAccountInfo: vi.fn().mockResolvedValue(makePoolAccount(lpMint)),
@@ -191,16 +165,19 @@ describe("checkLiquidity", () => {
     };
     mockGetConnection.mockReturnValue(mockConnection as any);
 
-    const result = await checkLiquidity(FAKE_MINT);
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({ primaryPool: "Raydium", poolAddress: poolAddr }),
+    );
     expect(result.lp_mint).toBe(lpMint.toBase58());
     expect(result.lp_locker).toBe("Streamflow");
   });
 
   it("returns lp_mint=null and lp_locker=null for non-Raydium pools", async () => {
-    mockFetch.mockResolvedValue(
-      jupiterResponse({ label: "Orca", ammKey: "OrcaPool1111" }),
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({ primaryPool: "Orca", poolAddress: "OrcaPool1111" }),
     );
-    const result = await checkLiquidity(FAKE_MINT);
     expect(result.lp_mint).toBeNull();
     expect(result.lp_locker).toBeNull();
   });
@@ -211,13 +188,7 @@ describe("checkLiquidity", () => {
       "strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m",
     );
     const tokenAccount = PublicKey.unique();
-
-    mockFetch.mockResolvedValue(
-      jupiterResponse({
-        label: "Raydium",
-        ammKey: PublicKey.unique().toBase58(),
-      }),
-    );
+    const poolAddr = PublicKey.unique().toBase58();
 
     const mockConnection = {
       getAccountInfo: vi.fn().mockResolvedValue(makePoolAccount(lpMint)),
@@ -237,7 +208,10 @@ describe("checkLiquidity", () => {
     };
     mockGetConnection.mockReturnValue(mockConnection as any);
 
-    const result = await checkLiquidity(FAKE_MINT);
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({ primaryPool: "Raydium", poolAddress: poolAddr }),
+    );
     expect(result.lp_locked).toBe(true);
     expect(result.lp_lock_percentage).toBeGreaterThan(0);
   });
@@ -248,13 +222,7 @@ describe("checkLiquidity", () => {
       "UNCX77nZrA3TdAxMEggqG18xxpgiNGT6iqyynPwpoxN",
     );
     const tokenAccount = PublicKey.unique();
-
-    mockFetch.mockResolvedValue(
-      jupiterResponse({
-        label: "Raydium",
-        ammKey: PublicKey.unique().toBase58(),
-      }),
-    );
+    const poolAddr = PublicKey.unique().toBase58();
 
     const mockConnection = {
       getAccountInfo: vi.fn().mockResolvedValue(makePoolAccount(lpMint)),
@@ -274,7 +242,10 @@ describe("checkLiquidity", () => {
     };
     mockGetConnection.mockReturnValue(mockConnection as any);
 
-    const result = await checkLiquidity(FAKE_MINT);
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({ primaryPool: "Raydium", poolAddress: poolAddr }),
+    );
     expect(result.lp_locked).toBe(true);
   });
 
@@ -282,13 +253,7 @@ describe("checkLiquidity", () => {
     const lpMint = PublicKey.unique();
     const randomOwner = PublicKey.unique();
     const tokenAccount = PublicKey.unique();
-
-    mockFetch.mockResolvedValue(
-      jupiterResponse({
-        label: "Raydium",
-        ammKey: PublicKey.unique().toBase58(),
-      }),
-    );
+    const poolAddr = PublicKey.unique().toBase58();
 
     const mockConnection = {
       getAccountInfo: vi.fn().mockResolvedValue(makePoolAccount(lpMint)),
@@ -308,18 +273,16 @@ describe("checkLiquidity", () => {
     };
     mockGetConnection.mockReturnValue(mockConnection as any);
 
-    const result = await checkLiquidity(FAKE_MINT);
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({ primaryPool: "Raydium", poolAddress: poolAddr }),
+    );
     expect(result.lp_locked).toBe(false);
     expect(result.lp_lock_percentage).toBe(0);
   });
 
   it("returns lp_locked=null when pool account has wrong length", async () => {
-    mockFetch.mockResolvedValue(
-      jupiterResponse({
-        label: "Raydium",
-        ammKey: PublicKey.unique().toBase58(),
-      }),
-    );
+    const poolAddr = PublicKey.unique().toBase58();
 
     const mockConnection = {
       getAccountInfo: vi.fn().mockResolvedValue({
@@ -333,19 +296,17 @@ describe("checkLiquidity", () => {
     };
     mockGetConnection.mockReturnValue(mockConnection as any);
 
-    const result = await checkLiquidity(FAKE_MINT);
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({ primaryPool: "Raydium", poolAddress: poolAddr }),
+    );
     expect(result.lp_locked).toBeNull();
     // Should not have called getTokenLargestAccounts since pool was invalid
     expect(mockConnection.getTokenLargestAccounts).not.toHaveBeenCalled();
   });
 
   it("returns lp_locked=null when pool account is null", async () => {
-    mockFetch.mockResolvedValue(
-      jupiterResponse({
-        label: "Raydium",
-        ammKey: PublicKey.unique().toBase58(),
-      }),
-    );
+    const poolAddr = PublicKey.unique().toBase58();
 
     const mockConnection = {
       getAccountInfo: vi.fn().mockResolvedValue(null),
@@ -354,25 +315,26 @@ describe("checkLiquidity", () => {
     };
     mockGetConnection.mockReturnValue(mockConnection as any);
 
-    const result = await checkLiquidity(FAKE_MINT);
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({ primaryPool: "Raydium", poolAddress: poolAddr }),
+    );
     expect(result.lp_locked).toBeNull();
   });
 
   it("handles RPC error in LP lock detection gracefully", async () => {
-    mockFetch.mockResolvedValue(
-      jupiterResponse({
-        label: "Raydium",
-        ammKey: PublicKey.unique().toBase58(),
-      }),
-    );
+    const poolAddr = PublicKey.unique().toBase58();
 
     const mockConnection = {
       getAccountInfo: vi.fn().mockRejectedValue(new Error("RPC timeout")),
     };
     mockGetConnection.mockReturnValue(mockConnection as any);
 
-    const result = await checkLiquidity(FAKE_MINT);
-    // Should still return liquidity info from Jupiter, just with null LP lock
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({ primaryPool: "Raydium", poolAddress: poolAddr }),
+    );
+    // Should still return liquidity info from quote, just with null LP lock
     expect(result.has_liquidity).toBe(true);
     expect(result.lp_locked).toBeNull();
   });
@@ -382,13 +344,7 @@ describe("checkLiquidity", () => {
     const randomOwner = PublicKey.unique();
     const tokenAccount1 = PublicKey.unique();
     const tokenAccount2 = PublicKey.unique();
-
-    mockFetch.mockResolvedValue(
-      jupiterResponse({
-        label: "Raydium",
-        ammKey: PublicKey.unique().toBase58(),
-      }),
-    );
+    const poolAddr = PublicKey.unique().toBase58();
 
     const mockConnection = {
       getAccountInfo: vi.fn().mockResolvedValue(makePoolAccount(lpMint)),
@@ -414,7 +370,10 @@ describe("checkLiquidity", () => {
     };
     mockGetConnection.mockReturnValue(mockConnection as any);
 
-    const result = await checkLiquidity(FAKE_MINT);
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({ primaryPool: "Raydium", poolAddress: poolAddr }),
+    );
     // Should not crash, should process second account fine
     expect(result.lp_locked).toBe(false);
   });
@@ -424,19 +383,19 @@ describe("checkLiquidity", () => {
   // -------------------------------------------------------------------------
 
   it("returns WARNING risk for shallow liquidity without lock info", async () => {
-    mockFetch.mockResolvedValue(
-      jupiterResponse({ label: "Orca", priceImpactPct: "15.0" }),
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({ primaryPool: "Orca", priceImpactPct: 15.0 }),
     );
-    const result = await checkLiquidity(FAKE_MINT);
     expect(result.liquidity_rating).toBe("SHALLOW");
     expect(result.risk).toBe("WARNING");
   });
 
   it("returns SAFE risk for deep liquidity", async () => {
-    mockFetch.mockResolvedValue(
-      jupiterResponse({ label: "Orca", priceImpactPct: "0.1" }),
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({ primaryPool: "Orca", priceImpactPct: 0.1 }),
     );
-    const result = await checkLiquidity(FAKE_MINT);
     expect(result.liquidity_rating).toBe("DEEP");
     expect(result.risk).toBe("SAFE");
   });

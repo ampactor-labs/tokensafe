@@ -25,6 +25,7 @@ import { checkLiquidity } from "../src/analysis/checks/liquidity.js";
 import { checkMetadata } from "../src/analysis/checks/metadata.js";
 import { checkTokenAge } from "../src/analysis/checks/token-age.js";
 import { analyzeHoneypot } from "../src/analysis/checks/honeypot.js";
+import { BUY_AMOUNT_LAMPORTS_BIGINT } from "../src/analysis/checks/jupiter.js";
 
 // ── Test constants ──────────────────────────────────────────────────
 
@@ -376,64 +377,30 @@ describe("checkTopHolders", () => {
 });
 
 // ════════════════════════════════════════════════════════════════════
-// 3. liquidity
+// 3. liquidity (prefetched quote path — production path)
 // ════════════════════════════════════════════════════════════════════
 
 describe("checkLiquidity", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-    vi.stubGlobal("fetch", vi.fn());
-  });
-
-  it("returns SAFE with pool label when routes found", async () => {
-    (fetch as Mock).mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          routePlan: [{ swapInfo: { label: "Raydium" } }],
-        }),
+  it("returns SAFE with pool info from prefetched quote", async () => {
+    const result = await checkLiquidity(MINT, {
+      outAmount: "1000000",
+      priceImpactPct: 0.5,
+      primaryPool: "Raydium",
+      poolAddress: "pool123",
     });
-    const result = await checkLiquidity(MINT);
     expect(result.has_liquidity).toBe(true);
     expect(result.primary_pool).toBe("Raydium");
+    expect(result.liquidity_rating).toBe("DEEP");
     expect(result.risk).toBe("SAFE");
   });
 
-  it("pairs wSOL with USDC instead of SOL (avoids self-quoting)", async () => {
-    const SOL_MINT = "So11111111111111111111111111111111111111112";
-    const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-    (fetch as Mock).mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          routePlan: [{ swapInfo: { label: "Raydium" } }],
-        }),
-    });
-    await checkLiquidity(SOL_MINT);
-    const calledUrl = (fetch as Mock).mock.calls[0][0] as string;
-    expect(calledUrl).toContain(`outputMint=${USDC_MINT}`);
-    expect(calledUrl).not.toContain(`outputMint=${SOL_MINT}`);
-  });
-
-  it("returns CRITICAL when response is not ok", async () => {
-    (fetch as Mock).mockResolvedValue({ ok: false });
-    const result = await checkLiquidity(MINT);
+  it("returns CRITICAL when prefetched quote is null", async () => {
+    const result = await checkLiquidity(MINT, null);
     expect(result.has_liquidity).toBe(false);
     expect(result.risk).toBe("CRITICAL");
   });
 
-  it("returns CRITICAL when routePlan is empty", async () => {
-    (fetch as Mock).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ routePlan: [] }),
-    });
-    const result = await checkLiquidity(MINT);
-    expect(result.has_liquidity).toBe(false);
-    expect(result.risk).toBe("CRITICAL");
-  });
-
-  it("returns CRITICAL when fetch throws", async () => {
-    (fetch as Mock).mockRejectedValue(new Error("network error"));
+  it("returns CRITICAL when no quote provided", async () => {
     const result = await checkLiquidity(MINT);
     expect(result.has_liquidity).toBe(false);
     expect(result.risk).toBe("CRITICAL");
@@ -606,20 +573,24 @@ describe("analyzeHoneypot", () => {
       primaryPool: "Raydium",
       poolAddress: "pool123",
     };
-    const result = analyzeHoneypot(buyQuote, sellQuote);
+    const result = analyzeHoneypot(
+      buyQuote,
+      sellQuote,
+      BUY_AMOUNT_LAMPORTS_BIGINT,
+    );
     expect(result.can_sell).toBe(true);
     expect(result.risk).toBe("SAFE");
   });
 
   it("returns UNKNOWN with null can_sell when buy quote is null (no route, not a confirmed honeypot)", () => {
-    const result = analyzeHoneypot(null, null);
+    const result = analyzeHoneypot(null, null, BUY_AMOUNT_LAMPORTS_BIGINT);
     expect(result.can_sell).toBeNull();
     expect(result.risk).toBe("UNKNOWN");
     expect(result.note).toContain("too new");
   });
 
   it("returns DANGEROUS when sell quote is null (true honeypot — buy exists, sell doesn't)", () => {
-    const result = analyzeHoneypot(buyQuote, null);
+    const result = analyzeHoneypot(buyQuote, null, BUY_AMOUNT_LAMPORTS_BIGINT);
     expect(result.can_sell).toBe(false);
     expect(result.risk).toBe("DANGEROUS");
   });
@@ -631,9 +602,55 @@ describe("analyzeHoneypot", () => {
       primaryPool: "Raydium",
       poolAddress: "pool123",
     };
-    const result = analyzeHoneypot(buyQuote, sellQuote);
+    const result = analyzeHoneypot(
+      buyQuote,
+      sellQuote,
+      BUY_AMOUNT_LAMPORTS_BIGINT,
+    );
     expect(result.can_sell).toBe(true);
     expect(result.risk).toBe("DANGEROUS");
     expect(result.sell_tax_bps).toBeGreaterThan(1000);
+  });
+
+  it("handles USDC-denominated round-trip without false sell tax (wSOL case)", () => {
+    const usdcBuyAmount = 5_000_000n; // 5 USDC
+    const buyQ = {
+      outAmount: "30000000",
+      priceImpactPct: 0.5,
+      primaryPool: "Raydium",
+      poolAddress: "p1",
+    };
+    // Sell returns 4.9M USDC — 2% round-trip loss, after subtracting
+    // expected losses (0.5% buy impact + 0.5% sell impact + 0.5% fees = 1.5%),
+    // remaining 0.5% = 50 bps < 100 bps noise floor → 0
+    const sellQ = {
+      outAmount: "4900000",
+      priceImpactPct: 0.5,
+      primaryPool: "Raydium",
+      poolAddress: "p1",
+    };
+    const result = analyzeHoneypot(buyQ, sellQ, usdcBuyAmount);
+    expect(result.can_sell).toBe(true);
+    expect(result.sell_tax_bps).toBe(0);
+    expect(result.risk).toBe("SAFE");
+  });
+
+  it("detects real sell tax with correct buy amount", () => {
+    const buyAmount = 100_000_000n; // 0.1 SOL
+    const buyQ = {
+      outAmount: "500000000",
+      priceImpactPct: 0.1,
+      primaryPool: "Raydium",
+      poolAddress: "p1",
+    };
+    const sellQ = {
+      outAmount: "50000000",
+      priceImpactPct: 0.1,
+      primaryPool: "Raydium",
+      poolAddress: "p1",
+    }; // 50% loss
+    const result = analyzeHoneypot(buyQ, sellQ, buyAmount);
+    expect(result.sell_tax_bps).toBeGreaterThan(1000);
+    expect(result.risk).toBe("DANGEROUS");
   });
 });

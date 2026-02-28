@@ -24,6 +24,7 @@ export interface JupiterQuote {
 export interface JupiterRoundTrip {
   buyQuote: JupiterQuote | null;
   sellQuote: JupiterQuote | null;
+  buyInputAmount: bigint;
 }
 
 export async function fetchQuote(
@@ -61,11 +62,17 @@ export async function fetchRoundTrip(
   const pairMint = mintAddress === SOL_MINT ? USDC_MINT : SOL_MINT;
   const buyAmount = mintAddress === SOL_MINT ? "5000000" : BUY_AMOUNT_LAMPORTS; // 5 USDC vs 0.1 SOL
 
+  const buyInputAmountBigint = BigInt(buyAmount);
+
   const buyQuote = await fetchQuote(pairMint, mintAddress, buyAmount);
   if (!buyQuote || !buyQuote.outAmount || buyQuote.outAmount === "0") {
-    return { buyQuote: null, sellQuote: null };
+    return {
+      buyQuote: null,
+      sellQuote: null,
+      buyInputAmount: buyInputAmountBigint,
+    };
   }
 
   const sellQuote = await fetchQuote(mintAddress, pairMint, buyQuote.outAmount);
-  return { buyQuote, sellQuote };
+  return { buyQuote, sellQuote, buyInputAmount: buyInputAmountBigint };
 }

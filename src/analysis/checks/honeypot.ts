@@ -1,4 +1,3 @@
-import { BUY_AMOUNT_LAMPORTS_BIGINT } from "./jupiter.js";
 import type { JupiterQuote } from "./jupiter.js";
 
 export interface HoneypotResult {
@@ -25,6 +24,7 @@ const NOISE_FLOOR_BPS = 100;
 export function analyzeHoneypot(
   buyQuote: JupiterQuote | null,
   sellQuote: JupiterQuote | null,
+  buyInputAmount: bigint,
 ): HoneypotResult {
   if (!buyQuote || !buyQuote.outAmount || buyQuote.outAmount === "0") {
     // No Jupiter route at all — can't determine if token is sellable.
@@ -47,7 +47,7 @@ export function analyzeHoneypot(
     };
   }
 
-  const solSpent = BUY_AMOUNT_LAMPORTS_BIGINT;
+  const solSpent = buyInputAmount;
   const solReturned = BigInt(sellQuote.outAmount);
 
   let sell_tax_bps: number | null = null;

@@ -205,7 +205,11 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
     risk: "SAFE",
   };
 
-  const emptyTrip: JupiterRoundTrip = { buyQuote: null, sellQuote: null };
+  const emptyTrip: JupiterRoundTrip = {
+    buyQuote: null,
+    sellQuote: null,
+    buyInputAmount: 0n,
+  };
 
   const [holders, jupiterTrip, metadata, tokenAge] = await Promise.all([
     checkTopHolders(mintAddress, mintData.supplyRaw)
@@ -231,7 +235,11 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
   // Honeypot: pure computation from Jupiter quotes (no I/O)
   const honeypotRaw: HoneypotResult | null =
     jupiterTrip.buyQuote || jupiterTrip.sellQuote
-      ? analyzeHoneypot(jupiterTrip.buyQuote, jupiterTrip.sellQuote)
+      ? analyzeHoneypot(
+          jupiterTrip.buyQuote,
+          jupiterTrip.sellQuote,
+          jupiterTrip.buyInputAmount,
+        )
       : null;
   const honeypot: (HoneypotResult & { status: "OK" | "UNAVAILABLE" }) | null =
     honeypotRaw ? { ...honeypotRaw, status: "OK" } : null;
