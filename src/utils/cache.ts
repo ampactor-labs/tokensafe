@@ -22,6 +22,7 @@ export function getCached(mint: string): TokenCheckResult | undefined {
 }
 
 export function setCached(mint: string, result: TokenCheckResult): void {
+  if (result.degraded) return;
   cache.set(mint, result);
 }
 

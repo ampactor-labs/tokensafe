@@ -47,10 +47,6 @@ async function main() {
     assert(typeof body.network === "string", "missing network");
     assert(typeof body.uptime === "number", "missing uptime");
     assert(typeof body.cache?.size === "number", "missing cache.size");
-    assert(
-      typeof body.monitorCache?.size === "number",
-      "missing monitorCache.size",
-    );
   });
 
   await check("X-Response-Time header present", async () => {
@@ -129,16 +125,6 @@ async function main() {
     const pr = res.headers.get("payment-required");
     assert(pr !== null && pr.length > 0, "missing PAYMENT-REQUIRED header");
   });
-
-  await check(
-    "GET /v1/monitor → 402 with PAYMENT-REQUIRED header",
-    async () => {
-      const res = await fetch(`${BASE}/v1/monitor?mints=${WSOL}`);
-      assert(res.status === 402, `expected 402, got ${res.status}`);
-      const pr = res.headers.get("payment-required");
-      assert(pr !== null && pr.length > 0, "missing PAYMENT-REQUIRED header");
-    },
-  );
 
   // --- Error handling ---
   console.log("\nError handling:");

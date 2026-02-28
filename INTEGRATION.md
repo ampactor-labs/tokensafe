@@ -75,6 +75,27 @@ Returns comprehensive risk assessment for a single Solana token.
 | `response_signature` | string | Ed25519 signature over `{mint, checked_at, rpc_slot, risk_score}` |
 | `signer_pubkey` | string | Hex-encoded public key for signature verification |
 | `checks` | object | Detailed per-check results (see below) |
+| `changes` | object \| null | Delta report vs previous check (null on first check or cache hit) |
+| `alerts` | array | Severity-ranked alerts for significant changes (empty if no changes) |
+
+**Changes object (when non-null):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `previous_checked_at` | string | ISO 8601 timestamp of previous check |
+| `risk_score_delta` | number | Score change (positive = riskier) |
+| `previous_risk_score` | number | Score at previous check |
+| `previous_risk_level` | string | Level at previous check |
+| `changed_fields` | array | List of `{ field, previous, current }` for each changed check |
+
+**Alert object:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `mint` | string | Token mint address |
+| `symbol` | string \| null | Token symbol |
+| `severity` | string | HIGH or MEDIUM |
+| `message` | string | Human-readable description of the change |
 
 **Checks object:**
 
@@ -97,25 +118,6 @@ Returns comprehensive risk assessment for a single Solana token.
 
 Rate-limited to 10/min per IP. Returns `mint`, `name`, `symbol`, `risk_score`, `risk_level`, `summary`, `degraded`, `is_token_2022`, `has_risky_extensions`, and `full_report` (upsell to paid endpoint).
 
-### `GET /v1/batch?mints=<MINT1>,<MINT2>,...` — Batch Check ($0.04)
-
-Check up to 10 tokens at once. 50% discount at max 10 tokens vs individual checks.
-
-**Response:**
-
-```json
-{
-  "checked_at": "2026-02-27T12:00:00Z",
-  "token_count": 3,
-  "results": [ /* array of full check results */ ],
-  "errors": [ /* { mint, error: { code, message } } for failed tokens */ ]
-}
-```
-
-### `GET /v1/monitor?mints=<MINT1>,<MINT2>,...` — Portfolio Monitor ($0.008)
-
-Same as batch but includes delta detection — what changed since last check. Returns alerts for critical changes (authority activations, liquidity removals, score jumps).
-
 ### `GET /health` — Server Status (Free)
 
 Returns server status, version, uptime, cache stats, signer public key for response verification, and available API versions.
@@ -136,7 +138,7 @@ Returns server status, version, uptime, cache stats, signer public key for respo
 |------|-------------|---------|
 | `INVALID_MINT_ADDRESS` | 400 | Bad or missing mint address |
 | `TOKEN_NOT_FOUND` | 404 | Mint account doesn't exist on chain |
-| `TOO_MANY_MINTS` | 400 | Batch/monitor exceeds 10 mint limit |
+| `TOO_MANY_MINTS` | 400 | (Reserved) |
 | `RPC_ERROR` | 503 | Solana RPC unavailable — retry later |
 | `RATE_LIMIT_EXCEEDED` | 429 | Too many requests — check `X-RateLimit-Reset` header |
 | `INTERNAL_ERROR` | 500 | Unexpected server error |
@@ -192,14 +194,6 @@ TokenSafe is registered as an MCP tool. When an agent's LLM sees a task like "ch
 {
   "name": "solana_token_safety_check",
   "arguments": { "mint_address": "TOKEN_MINT_ADDRESS" }
-}
-```
-
-Batch checking:
-```json
-{
-  "name": "solana_token_batch_check",
-  "arguments": { "mint_addresses": "MINT1,MINT2,MINT3" }
 }
 ```
 

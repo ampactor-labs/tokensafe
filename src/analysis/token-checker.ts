@@ -30,6 +30,13 @@ import {
   setNegativeCached,
 } from "../utils/cache.js";
 import { signResponse, getSignerPubkey } from "../utils/response-signer.js";
+import {
+  detectChanges,
+  generateAlerts,
+  type ChangeReport,
+  type MonitorAlert,
+} from "./delta.js";
+import { getCheckHistory, setCheckHistory } from "../utils/monitor-cache.js";
 
 export interface TokenCheckResult {
   mint: string;
@@ -87,6 +94,8 @@ export interface TokenCheckResult {
   degraded_checks: string[];
   response_signature: string;
   signer_pubkey: string;
+  changes: ChangeReport | null;
+  alerts: MonitorAlert[];
 }
 
 export interface TokenCheckLiteResult {
@@ -154,8 +163,15 @@ export async function checkToken(
 
   try {
     const result = await analysisPromise;
-    setCached(mintAddress, result);
-    return { result, fromCache: false };
+    const previous = getCheckHistory(mintAddress);
+    const changes = previous ? detectChanges(previous, result) : null;
+    const alerts = changes
+      ? generateAlerts(mintAddress, result.symbol, changes)
+      : [];
+    setCheckHistory(mintAddress, result);
+    const enriched: TokenCheckResult = { ...result, changes, alerts };
+    setCached(mintAddress, enriched);
+    return { result: enriched, fromCache: false };
   } catch (err) {
     if (err instanceof ApiError) {
       setNegativeCached(mintAddress, err);
@@ -378,5 +394,7 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
       risk_score,
     }),
     signer_pubkey: getSignerPubkey(),
+    changes: null,
+    alerts: [],
   };
 }

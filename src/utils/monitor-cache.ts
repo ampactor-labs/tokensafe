@@ -1,10 +1,10 @@
 import { LRUCache } from "lru-cache";
 import type { TokenCheckResult } from "../analysis/token-checker.js";
 
-// Stores the last monitor snapshot per mint for delta detection.
+// Stores snapshots for delta detection on subsequent /v1/check calls.
 // Separate from the 5-min analysis cache — this has 24h TTL and
-// only stores results returned via /v1/monitor.
-const monitorHistory = new LRUCache<string, TokenCheckResult>({
+// persists previous results for change comparison.
+const checkHistory = new LRUCache<string, TokenCheckResult>({
   max: 5_000,
   ttl: 24 * 60 * 60 * 1000, // 24 hours
 });
@@ -12,10 +12,8 @@ const monitorHistory = new LRUCache<string, TokenCheckResult>({
 let historyHits = 0;
 let historyMisses = 0;
 
-export function getMonitorHistory(
-  mint: string,
-): TokenCheckResult | undefined {
-  const result = monitorHistory.get(mint);
+export function getCheckHistory(mint: string): TokenCheckResult | undefined {
+  const result = checkHistory.get(mint);
   if (result) {
     historyHits++;
   } else {
@@ -24,14 +22,11 @@ export function getMonitorHistory(
   return result;
 }
 
-export function setMonitorHistory(
-  mint: string,
-  result: TokenCheckResult,
-): void {
-  monitorHistory.set(mint, result);
+export function setCheckHistory(mint: string, result: TokenCheckResult): void {
+  checkHistory.set(mint, result);
 }
 
-export function monitorCacheStats(): {
+export function checkHistoryCacheStats(): {
   size: number;
   maxSize: number;
   hits: number;
@@ -40,7 +35,7 @@ export function monitorCacheStats(): {
 } {
   const total = historyHits + historyMisses;
   return {
-    size: monitorHistory.size,
+    size: checkHistory.size,
     maxSize: 5_000,
     hits: historyHits,
     misses: historyMisses,
@@ -48,8 +43,8 @@ export function monitorCacheStats(): {
   };
 }
 
-export function clearMonitorCache(): void {
-  monitorHistory.clear();
+export function clearCheckHistory(): void {
+  checkHistory.clear();
   historyHits = 0;
   historyMisses = 0;
 }

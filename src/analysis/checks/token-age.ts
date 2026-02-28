@@ -38,22 +38,9 @@ export async function checkTokenAge(
     }
 
     // Established token: 100 sigs returned means >100 txs total.
-    // Use oldest of returned sigs as minimum age lower bound.
+    // We don't know actual creation time — oldest of last 100 sigs
+    // could be minutes old for active tokens.
     if (sigs.length === 100) {
-      const oldest = sigs[sigs.length - 1];
-      if (oldest.blockTime) {
-        const createdAt = new Date(oldest.blockTime * 1000);
-        const ageMs = Date.now() - createdAt.getTime();
-        return {
-          token_age_hours: Math.max(
-            0,
-            Math.round((ageMs / 3_600_000) * 100) / 100,
-          ),
-          token_age_minutes: Math.max(0, Math.round(ageMs / 60_000)),
-          created_at: createdAt.toISOString(),
-          established: true,
-        };
-      }
       return {
         token_age_hours: null,
         token_age_minutes: null,

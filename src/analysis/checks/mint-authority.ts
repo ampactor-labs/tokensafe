@@ -98,12 +98,14 @@ function parseExtensions(data: Buffer): ExtensionInfo[] {
   const extensions: ExtensionInfo[] = [];
   while (offset + 4 <= data.length) {
     const typeId = data.readUInt16LE(offset);
+    if (typeId === 0) {
+      offset += 2;
+      continue;
+    }
     const length = data.readUInt16LE(offset + 2);
     const valueStart = offset + 4;
     const paddingLen = length % 4 === 0 ? 0 : 4 - (length % 4);
     offset = valueStart + length + paddingLen;
-
-    if (typeId === 0) continue;
 
     const name = EXTENSION_NAMES[typeId];
     if (!name) {

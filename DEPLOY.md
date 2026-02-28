@@ -19,7 +19,7 @@
 npm install && npm test && npx tsc --noEmit
 ```
 
-224 tests pass (49 risk-score + 53 checks + 27 delta + 18 liquidity + 42 integration + 10 jupiter + 5 response-signer + 20 honeypot). Tests mock x402 and RPC — no network or wallet needed.
+212 tests pass (49 risk-score + 56 checks + 27 delta + 18 liquidity + 27 integration + 10 jupiter + 5 response-signer + 20 honeypot). Tests mock x402 and RPC — no network or wallet needed.
 
 ---
 
@@ -49,14 +49,13 @@ The smoke test validates all endpoints:
 
 | Check | What it verifies |
 |---|---|
-| `GET /health` → 200 | Status, version, network, uptime, cache stats, monitor cache stats |
+| `GET /health` → 200 | Status, version, network, uptime, cache stats |
 | Response headers | `X-Response-Time` (ms), `X-RateLimit-Limit/Remaining/Reset` |
 | `GET /v1/check/lite` → 200 | Risk score, risk level, summary, full_report upsell, no `checks` (paid-only) |
 | `GET /v1/check/lite` bad mint → 400 | `INVALID_MINT_ADDRESS` error |
 | `GET /v1/check/lite` no mint → 400 | Missing parameter error |
 | `X-Cache` on lite | `HIT` or `MISS` header present |
 | `GET /v1/check` → 402 | `PAYMENT-REQUIRED` header with x402 payment requirements |
-| `GET /v1/monitor` → 402 | `PAYMENT-REQUIRED` header with x402 payment requirements |
 | `GET /unknown` → 404 | `NOT_FOUND` structured error |
 
 Exits 0 on pass, 1 on fail.
@@ -182,7 +181,7 @@ To test a specific mint:
 SVM_PRIVATE_KEY=<YOUR_BASE58_KEYPAIR> npx tsx scripts/x402-client.ts EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
 ```
 
-The test client only tests `GET /v1/check`. The monitor endpoint (`GET /v1/monitor`) uses the same x402 flow — if check works, monitor works.
+The test client tests `GET /v1/check` with multiple tokens.
 
 ### 4.5 Expected output
 
@@ -215,7 +214,6 @@ SVM_PRIVATE_KEY=<YOUR_BASE58_KEYPAIR> SMOKE_URL=https://<your-railway-domain> np
 - [ ] Smoke test passes locally (`npm run test:smoke`)
 - [ ] 402 response has `PAYMENT-REQUIRED` header
 - [ ] `/v1/check` payment amount matches middleware config (testing: 1000/$0.001, production: 8000/$0.008)
-- [ ] `/v1/monitor` payment amount matches middleware config (testing: 1000/$0.001, production: 8000/$0.008)
 - [ ] `payTo` in payment requirements matches `TREASURY_WALLET_ADDRESS`
 - [ ] Network = `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` (devnet CAIP-2)
 - [ ] x402 client gets 200 with full analysis JSON after payment
@@ -244,29 +242,23 @@ Without these, no agent finds you. These are machine-readable registrations — 
 
 | Endpoint | Method | Price | Auth | Description |
 |---|---|---|---|---|
-| `/v1/check` | GET | $0.008 USDC | x402 | Full token safety analysis with all checks |
+| `/v1/check` | GET | $0.008 USDC | x402 | Full token safety analysis with delta detection |
 | `/v1/check/lite` | GET | Free | None (rate-limited) | Risk score + summary, no detailed checks |
-| `/v1/monitor` | GET | $0.008 USDC | x402 | Portfolio monitor for up to 10 tokens with delta detection |
 | `/health` | GET | Free | None | Server status, version, cache stats |
 
 ### 6.1 MCP Registries (smithery.ai + mcp.so)
 
-Register **three** MCP tools using `src/mcp/tool-definition.json`:
+Register **two** MCP tools using `src/mcp/tool-definition.json`:
 
 **Tool 1: `solana_token_safety_check`**
 - Endpoint: `GET /v1/check?mint={mint_address}`
 - Price: $0.008 USDC via x402
-- Keywords in description: safe to trade, rug pull, mint authority, freeze authority, liquidity, honeypot, risk score, Token-2022
+- Keywords in description: safe to trade, rug pull, mint authority, freeze authority, liquidity, honeypot, risk score, Token-2022, delta detection, alerts
 
 **Tool 2: `solana_token_safety_lite`**
 - Endpoint: `GET /v1/check/lite?mint={mint_address}`
 - Price: Free
 - Keywords: quick check, risk score, free, screening
-
-**Tool 3: `solana_token_portfolio_monitor`**
-- Endpoint: `GET /v1/monitor?mints={comma_separated_addresses}`
-- Price: $0.008 USDC via x402
-- Keywords: monitor, portfolio, delta, changes, alerts, surveillance
 
 The descriptions in `tool-definition.json` are optimized for LLM pattern-matching. The agent's model reads these descriptions to decide whether to invoke the tool — specific, concrete terms matter more than marketing language.
 
@@ -286,7 +278,7 @@ URL: https://<your-railway-domain>
 Description: Cheapest transparent Solana token safety scanner — deterministic on-chain analysis, $0.008/check or free lite tier. Mint/freeze authority, holder concentration, liquidity depth, LP locks, honeypot detection, sell tax estimation, Token-2022 risks. No API keys, no accounts. Pay per request in USDC via x402.
 Category: Security / Analytics
 Network: Solana
-Price: $0.008/check (full), $0.008/monitor, $0.04/batch, free (lite)
+Price: $0.008/check (full), free (lite)
 Payment: USDC on Solana via x402
 ```
 
@@ -294,7 +286,7 @@ Payment: USDC on Solana via x402
 
 Register at [payai.network](https://payai.network). Already using their facilitator — agents browsing PayAI's marketplace see services listed here.
 
-Listing should include all three endpoints with their prices. Emphasize the free lite tier — it's a funnel into the paid endpoint.
+Listing should include both endpoints with their prices. Emphasize the free lite tier — it's a funnel into the paid endpoint.
 
 ### 6.4 x402scan (Merit Systems)
 
@@ -314,7 +306,7 @@ Submit manually at [x402scan](https://x402scan.com) for inclusion. No automatic 
 2. **Transparent:** Every risk point traceable to on-chain state. No opaque ML scoring.
 3. **Direct on-chain:** Zero dependency on GoPlus, RugCheck, or any third-party security API.
 4. **Free tier:** `/v1/check/lite` gives agents a zero-cost way to screen tokens before paying for the full report.
-5. **Portfolio monitoring:** `/v1/monitor` with delta detection and severity-ranked alerts.
+5. **Built-in delta detection:** Every paid check includes `changes` and `alerts` — what changed since the last check.
 6. **No accounts, no API keys:** Payment IS authentication. USDC in, analysis out.
 
 ---
@@ -326,7 +318,7 @@ Submit manually at [x402scan](https://x402scan.com) for inclusion. No automatic 
 | `npm run dev` | `tsx watch src/index.ts` | Dev server with hot reload + pino-pretty logs |
 | `npm run build` | `tsc` | Compile to `dist/` |
 | `npm start` | `node dist/index.js` | Production server |
-| `npm test` | `vitest run` | 224 tests (mocked, no network) |
+| `npm test` | `vitest run` | 212 tests (mocked, no network) |
 | `npm run test:smoke` | `tsx scripts/smoke.ts` | Smoke test against running server |
 | `npm run test:x402` | `tsx scripts/x402-client.ts` | x402 paid request test |
 | `npm run wallet:generate` | `tsx scripts/generate-test-wallet.ts` | Generate Solana test keypair |
