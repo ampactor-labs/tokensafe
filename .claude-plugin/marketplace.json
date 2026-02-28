@@ -1,0 +1,20 @@
+{
+  "name": "ampactor-labs",
+  "owner": {
+    "name": "Ampactor Labs"
+  },
+  "metadata": {
+    "description": "AI-agent tools from Ampactor Labs"
+  },
+  "plugins": [
+    {
+      "name": "tokensafe",
+      "source": "./",
+      "description": "Solana token safety scanner — $0.008/check via x402 USDC, no API keys, no accounts",
+      "version": "1.0.0",
+      "category": "security",
+      "tags": ["solana", "defi", "token-safety", "x402", "rug-pull"],
+      "homepage": "https://tokensafe-production.up.railway.app"
+    }
+  ]
+}
