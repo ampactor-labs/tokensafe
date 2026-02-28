@@ -12,7 +12,12 @@ import { checkMetadata, type MetadataResult } from "./checks/metadata.js";
 import { checkTokenAge, type TokenAgeResult } from "./checks/token-age.js";
 import { analyzeHoneypot, type HoneypotResult } from "./checks/honeypot.js";
 import { fetchRoundTrip, type JupiterRoundTrip } from "./checks/jupiter.js";
-import { computeRiskScore, generateRiskSummary } from "./risk-score.js";
+import {
+  computeRiskScore,
+  getRiskFactors,
+  generateRiskSummary,
+  METHODOLOGY_VERSION,
+} from "./risk-score.js";
 import { ApiError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { reportRpcFailure, reportRpcSuccess } from "../solana/rpc.js";
@@ -24,6 +29,7 @@ import {
   getNegativeCached,
   setNegativeCached,
 } from "../utils/cache.js";
+import { signResponse, getSignerPubkey } from "../utils/response-signer.js";
 
 export interface TokenCheckResult {
   mint: string;
@@ -49,26 +55,36 @@ export interface TokenCheckResult {
       decimals: number;
     };
     top_holders: {
+      status: "OK" | "UNAVAILABLE";
       top_10_percentage: number;
       top_1_percentage: number;
       holder_count_estimate: number | null;
       note: string | null;
       risk: "SAFE" | "HIGH" | "CRITICAL";
     };
-    liquidity: LiquidityResult | null;
+    liquidity: (LiquidityResult & { status: "OK" | "UNAVAILABLE" }) | null;
     metadata: {
+      status: "OK" | "UNAVAILABLE";
+      update_authority: string | null;
       mutable: boolean;
       has_uri: boolean;
       uri: string | null;
       risk: "SAFE" | "WARNING";
     } | null;
-    honeypot: HoneypotResult | null;
+    honeypot: (HoneypotResult & { status: "OK" | "UNAVAILABLE" }) | null;
     token_age_hours: number | null;
+    token_age_minutes: number | null;
+    token_program: string;
     is_token_2022: boolean;
     token_2022_extensions: ExtensionInfo[] | null;
   };
-  /** Internal summary for lite endpoint — omitted from full JSON response */
-  _summary?: string;
+  rpc_slot: number;
+  methodology_version: string;
+  risk_factors: string[];
+  summary: string;
+  degraded: boolean;
+  response_signature: string;
+  signer_pubkey: string;
 }
 
 export interface TokenCheckLiteResult {
@@ -150,7 +166,7 @@ export async function checkTokenLite(
       mint: result.mint,
       risk_score: result.risk_score,
       risk_level: result.risk_level,
-      summary: result._summary ?? "No risk factors detected",
+      summary: result.summary,
       full_report:
         "Pay $0.005 via x402 at GET /v1/check?mint=" +
         mintAddress +
@@ -179,10 +195,12 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
   // Step 2: run remaining checks in parallel (fault-isolated)
   // Jupiter round-trip (2 sequential calls) feeds both honeypot + liquidity,
   // saving one external HTTP call vs making them independently.
-  const fallbackHolders: TopHoldersResult = {
+  const fallbackHolders: TopHoldersResult & { status: "OK" | "UNAVAILABLE" } = {
+    status: "UNAVAILABLE",
     top_10_percentage: 0,
     top_1_percentage: 0,
     holder_count_estimate: null,
+    top_holders_detail: null,
     note: null,
     risk: "SAFE",
   };
@@ -190,28 +208,41 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
   const emptyTrip: JupiterRoundTrip = { buyQuote: null, sellQuote: null };
 
   const [holders, jupiterTrip, metadata, tokenAge] = await Promise.all([
-    checkTopHolders(mintAddress, mintData.supplyRaw).catch(
-      (err): TopHoldersResult => {
+    checkTopHolders(mintAddress, mintData.supplyRaw)
+      .then((r): TopHoldersResult & { status: "OK" | "UNAVAILABLE" } => ({
+        ...r,
+        status: "OK",
+      }))
+      .catch((err): TopHoldersResult & { status: "OK" | "UNAVAILABLE" } => {
         logger.warn({ err, mintAddress }, "Top holders check failed");
         return fallbackHolders;
-      },
-    ),
+      }),
     fetchRoundTrip(mintAddress).catch((): JupiterRoundTrip => emptyTrip),
-    checkMetadata(mintAddress).catch((): MetadataResult | null => null),
+    checkMetadata(mintAddress)
+      .then((r): (MetadataResult & { status: "OK" | "UNAVAILABLE" }) | null =>
+        r ? { ...r, status: "OK" } : null,
+      )
+      .catch(
+        (): (MetadataResult & { status: "OK" | "UNAVAILABLE" }) | null => null,
+      ),
     checkTokenAge(mintAddress).catch((): TokenAgeResult | null => null),
   ]);
 
   // Honeypot: pure computation from Jupiter quotes (no I/O)
-  const honeypot: HoneypotResult | null =
+  const honeypotRaw: HoneypotResult | null =
     jupiterTrip.buyQuote || jupiterTrip.sellQuote
       ? analyzeHoneypot(jupiterTrip.buyQuote, jupiterTrip.sellQuote)
       : null;
+  const honeypot: (HoneypotResult & { status: "OK" | "UNAVAILABLE" }) | null =
+    honeypotRaw ? { ...honeypotRaw, status: "OK" } : null;
 
   // Liquidity: use buy quote for pool info + price impact, then LP lock detection (RPC)
-  const liquidity: LiquidityResult | null = await checkLiquidity(
+  const liquidityRaw: LiquidityResult | null = await checkLiquidity(
     mintAddress,
     jupiterTrip.buyQuote,
   ).catch((): LiquidityResult | null => null);
+  const liquidity: (LiquidityResult & { status: "OK" | "UNAVAILABLE" }) | null =
+    liquidityRaw ? { ...liquidityRaw, status: "OK" } : null;
 
   // Post-processing: holder note for AMM vault ambiguity
   const holderNote =
@@ -228,13 +259,21 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
     honeypot,
   };
   const { risk_score, risk_level } = computeRiskScore(riskInput);
+  const risk_factors = getRiskFactors(riskInput);
   const summary = generateRiskSummary(riskInput);
+  const degraded =
+    holders.status === "UNAVAILABLE" ||
+    liquidity === null ||
+    metadata === null ||
+    honeypot === null;
+
+  const checked_at = new Date().toISOString();
 
   return {
     mint: mintAddress,
     name: metadata?.name ?? null,
     symbol: metadata?.symbol ?? null,
-    checked_at: new Date().toISOString(),
+    checked_at,
     cached_at: null,
     risk_score,
     risk_level,
@@ -257,6 +296,8 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
       liquidity,
       metadata: metadata
         ? {
+            status: metadata.status,
+            update_authority: metadata.update_authority,
             mutable: metadata.mutable,
             has_uri: metadata.has_uri,
             uri: metadata.uri,
@@ -265,10 +306,23 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
         : null,
       honeypot,
       token_age_hours: tokenAge?.token_age_hours ?? null,
+      token_age_minutes: tokenAge?.token_age_minutes ?? null,
+      token_program: mintData.tokenProgram,
       is_token_2022: mintData.isToken2022,
       token_2022_extensions:
         mintData.extensions.length > 0 ? mintData.extensions : null,
     },
-    _summary: summary,
+    rpc_slot: mintData.rpcSlot,
+    methodology_version: METHODOLOGY_VERSION,
+    risk_factors,
+    summary,
+    degraded,
+    response_signature: signResponse({
+      mint: mintAddress,
+      checked_at,
+      rpc_slot: mintData.rpcSlot,
+      risk_score,
+    }),
+    signer_pubkey: getSignerPubkey(),
   };
 }

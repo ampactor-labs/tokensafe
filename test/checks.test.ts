@@ -40,6 +40,7 @@ const SOME_PUBKEY = new PublicKey(
 function fakeConnection() {
   return {
     getAccountInfo: vi.fn(),
+    getAccountInfoAndContext: vi.fn(),
     getTokenLargestAccounts: vi.fn(),
     getSignaturesForAddress: vi.fn(),
   };
@@ -115,14 +116,20 @@ describe("checkMintAccount", () => {
   });
 
   it("throws TOKEN_NOT_FOUND when account is null", async () => {
-    conn.getAccountInfo.mockResolvedValue(null);
+    conn.getAccountInfoAndContext.mockResolvedValue({
+      value: null,
+      context: { slot: 0 },
+    });
     await expect(checkMintAccount(MINT)).rejects.toThrow("not found on chain");
   });
 
   it("returns renounced authorities for SPL Token mint", async () => {
-    conn.getAccountInfo.mockResolvedValue({
-      owner: new PublicKey(SPL_TOKEN_PROGRAM),
-      data: Buffer.alloc(82),
+    conn.getAccountInfoAndContext.mockResolvedValue({
+      value: {
+        owner: new PublicKey(SPL_TOKEN_PROGRAM),
+        data: Buffer.alloc(82),
+      },
+      context: { slot: 300000000 },
     });
     (getMint as Mock).mockResolvedValue({
       mintAuthority: null,
@@ -136,12 +143,16 @@ describe("checkMintAccount", () => {
     expect(result.freezeAuthority).toBeNull();
     expect(result.isToken2022).toBe(false);
     expect(result.extensions).toEqual([]);
+    expect(result.rpcSlot).toBe(300000000);
   });
 
   it("returns active authorities", async () => {
-    conn.getAccountInfo.mockResolvedValue({
-      owner: new PublicKey(SPL_TOKEN_PROGRAM),
-      data: Buffer.alloc(82),
+    conn.getAccountInfoAndContext.mockResolvedValue({
+      value: {
+        owner: new PublicKey(SPL_TOKEN_PROGRAM),
+        data: Buffer.alloc(82),
+      },
+      context: { slot: 300000001 },
     });
     (getMint as Mock).mockResolvedValue({
       mintAuthority: SOME_PUBKEY,
@@ -158,9 +169,12 @@ describe("checkMintAccount", () => {
   });
 
   it("detects Token-2022 program", async () => {
-    conn.getAccountInfo.mockResolvedValue({
-      owner: new PublicKey(TOKEN_2022_PROGRAM),
-      data: Buffer.alloc(83), // 82 base + 1 account_type
+    conn.getAccountInfoAndContext.mockResolvedValue({
+      value: {
+        owner: new PublicKey(TOKEN_2022_PROGRAM),
+        data: Buffer.alloc(83), // 82 base + 1 account_type
+      },
+      context: { slot: 300000002 },
     });
     (getMint as Mock).mockResolvedValue({
       mintAuthority: null,
@@ -180,9 +194,12 @@ describe("checkMintAccount", () => {
     SOME_PUBKEY.toBuffer().copy(value, 4);
     const data = buildToken2022Data([{ typeId: 12, value }]);
 
-    conn.getAccountInfo.mockResolvedValue({
-      owner: new PublicKey(TOKEN_2022_PROGRAM),
-      data,
+    conn.getAccountInfoAndContext.mockResolvedValue({
+      value: {
+        owner: new PublicKey(TOKEN_2022_PROGRAM),
+        data,
+      },
+      context: { slot: 300000003 },
     });
     (getMint as Mock).mockResolvedValue({
       mintAuthority: null,
@@ -205,9 +222,12 @@ describe("checkMintAccount", () => {
     value.writeUInt16LE(500, 106); // 5% transfer fee
     const data = buildToken2022Data([{ typeId: 1, value }]);
 
-    conn.getAccountInfo.mockResolvedValue({
-      owner: new PublicKey(TOKEN_2022_PROGRAM),
-      data,
+    conn.getAccountInfoAndContext.mockResolvedValue({
+      value: {
+        owner: new PublicKey(TOKEN_2022_PROGRAM),
+        data,
+      },
+      context: { slot: 300000004 },
     });
     (getMint as Mock).mockResolvedValue({
       mintAuthority: null,
@@ -224,9 +244,12 @@ describe("checkMintAccount", () => {
 
   it("handles TLV with no extensions (data ends at base)", async () => {
     // Token-2022 account that is exactly 83 bytes (base + account_type, no TLV)
-    conn.getAccountInfo.mockResolvedValue({
-      owner: new PublicKey(TOKEN_2022_PROGRAM),
-      data: Buffer.alloc(83),
+    conn.getAccountInfoAndContext.mockResolvedValue({
+      value: {
+        owner: new PublicKey(TOKEN_2022_PROGRAM),
+        data: Buffer.alloc(83),
+      },
+      context: { slot: 300000005 },
     });
     (getMint as Mock).mockResolvedValue({
       mintAuthority: null,
@@ -324,6 +347,31 @@ describe("checkTopHolders", () => {
     conn.getTokenLargestAccounts.mockResolvedValue({ value: accounts });
     const result = await checkTopHolders(MINT, 10000n);
     expect(result.holder_count_estimate).toBeNull();
+  });
+
+  it("returns top_holders_detail with addresses and percentages", async () => {
+    conn.getTokenLargestAccounts.mockResolvedValue({
+      value: [
+        { address: SOME_PUBKEY, amount: "300" },
+        { address: SOME_PUBKEY, amount: "200" },
+      ],
+    });
+    const result = await checkTopHolders(MINT, 1000n);
+    expect(result.top_holders_detail).toHaveLength(2);
+    expect(result.top_holders_detail![0]).toEqual({
+      address: SOME_PUBKEY.toBase58(),
+      percentage: 30,
+    });
+    expect(result.top_holders_detail![1]).toEqual({
+      address: SOME_PUBKEY.toBase58(),
+      percentage: 20,
+    });
+  });
+
+  it("returns null top_holders_detail for zero supply", async () => {
+    conn.getTokenLargestAccounts.mockResolvedValue({ value: [] });
+    const result = await checkTopHolders(MINT, 0n);
+    expect(result.top_holders_detail).toBeNull();
   });
 });
 
@@ -439,7 +487,7 @@ describe("checkMetadata", () => {
     expect(result!.risk).toBe("SAFE");
   });
 
-  it("parses name, symbol, and URI", async () => {
+  it("parses name, symbol, URI, and update_authority", async () => {
     const data = buildMetadataBuffer(
       "Cool Token",
       "COOL",
@@ -452,6 +500,8 @@ describe("checkMetadata", () => {
     expect(result!.symbol).toBe("COOL");
     expect(result!.uri).toBe("https://arweave.net/abc");
     expect(result!.has_uri).toBe(true);
+    // update_authority is 32 zero bytes → PublicKey.default (system program)
+    expect(result!.update_authority).toBe("11111111111111111111111111111111");
   });
 
   it("returns null on parse error (corrupt data)", async () => {
@@ -478,6 +528,7 @@ describe("checkTokenAge", () => {
     conn.getSignaturesForAddress.mockResolvedValue([]);
     const result = await checkTokenAge(MINT);
     expect(result.token_age_hours).toBeNull();
+    expect(result.token_age_minutes).toBeNull();
     expect(result.created_at).toBeNull();
   });
 
@@ -485,6 +536,7 @@ describe("checkTokenAge", () => {
     conn.getSignaturesForAddress.mockResolvedValue([{ blockTime: null }]);
     const result = await checkTokenAge(MINT);
     expect(result.token_age_hours).toBeNull();
+    expect(result.token_age_minutes).toBeNull();
   });
 
   it("calculates age correctly", async () => {
@@ -498,7 +550,21 @@ describe("checkTokenAge", () => {
     // Should be approximately 2 hours
     expect(result.token_age_hours).toBeGreaterThanOrEqual(1.9);
     expect(result.token_age_hours).toBeLessThanOrEqual(2.1);
+    expect(result.token_age_minutes).toBeGreaterThanOrEqual(115);
+    expect(result.token_age_minutes).toBeLessThanOrEqual(125);
     expect(result.created_at).not.toBeNull();
+  });
+
+  it("returns token_age_minutes for sub-hour tokens", async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const tenMinAgo = nowSec - 10 * 60;
+    conn.getSignaturesForAddress.mockResolvedValue([
+      { blockTime: nowSec },
+      { blockTime: tenMinAgo },
+    ]);
+    const result = await checkTokenAge(MINT);
+    expect(result.token_age_minutes).toBeGreaterThanOrEqual(9);
+    expect(result.token_age_minutes).toBeLessThanOrEqual(11);
   });
 
   it("returns null age for established token (100 sigs)", async () => {
@@ -508,6 +574,7 @@ describe("checkTokenAge", () => {
     conn.getSignaturesForAddress.mockResolvedValue(sigs);
     const result = await checkTokenAge(MINT);
     expect(result.token_age_hours).toBeNull();
+    expect(result.token_age_minutes).toBeNull();
     expect(result.created_at).toBeNull();
   });
 
@@ -515,6 +582,7 @@ describe("checkTokenAge", () => {
     conn.getSignaturesForAddress.mockRejectedValue(new Error("timeout"));
     const result = await checkTokenAge(MINT);
     expect(result.token_age_hours).toBeNull();
+    expect(result.token_age_minutes).toBeNull();
     expect(result.created_at).toBeNull();
   });
 });
@@ -543,13 +611,14 @@ describe("analyzeHoneypot", () => {
     expect(result.risk).toBe("SAFE");
   });
 
-  it("returns DANGEROUS when buy quote is null", () => {
+  it("returns UNKNOWN with null can_sell when buy quote is null (no route, not a confirmed honeypot)", () => {
     const result = analyzeHoneypot(null, null);
-    expect(result.can_sell).toBe(false);
-    expect(result.risk).toBe("DANGEROUS");
+    expect(result.can_sell).toBeNull();
+    expect(result.risk).toBe("UNKNOWN");
+    expect(result.note).toContain("too new");
   });
 
-  it("returns DANGEROUS when sell quote is null (true honeypot)", () => {
+  it("returns DANGEROUS when sell quote is null (true honeypot — buy exists, sell doesn't)", () => {
     const result = analyzeHoneypot(buyQuote, null);
     expect(result.can_sell).toBe(false);
     expect(result.risk).toBe("DANGEROUS");

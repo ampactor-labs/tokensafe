@@ -22,6 +22,16 @@ export const x402Middleware = paymentMiddleware(
       description:
         "Solana token safety check — mint authority, freeze authority, top holder concentration, liquidity, honeypot detection, metadata mutability, token age, Token-2022 extension risks, risk score",
     },
+    "GET /v1/batch": {
+      accepts: {
+        scheme: "exact",
+        network: config.networkCaip2,
+        payTo: config.treasuryWallet,
+        price: "$0.008",
+      },
+      description:
+        "Batch check up to 10 Solana tokens at once — full safety analysis for each, 20% discount vs individual checks",
+    },
     "GET /v1/monitor": {
       accepts: {
         scheme: "exact",

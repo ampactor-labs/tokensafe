@@ -4,6 +4,7 @@ import { logger } from "../../utils/logger.js";
 
 export interface TokenAgeResult {
   token_age_hours: number | null;
+  token_age_minutes: number | null;
   created_at: string | null;
 }
 
@@ -28,17 +29,29 @@ export async function checkTokenAge(
     ]);
 
     if (sigs.length === 0) {
-      return { token_age_hours: null, created_at: null };
+      return {
+        token_age_hours: null,
+        token_age_minutes: null,
+        created_at: null,
+      };
     }
 
     // Established token: >100 txs means it's not new — skip age penalty
     if (sigs.length === 100) {
-      return { token_age_hours: null, created_at: null };
+      return {
+        token_age_hours: null,
+        token_age_minutes: null,
+        created_at: null,
+      };
     }
 
     const oldest = sigs[sigs.length - 1];
     if (!oldest.blockTime) {
-      return { token_age_hours: null, created_at: null };
+      return {
+        token_age_hours: null,
+        token_age_minutes: null,
+        created_at: null,
+      };
     }
 
     const createdMs = oldest.blockTime * 1000;
@@ -47,10 +60,11 @@ export async function checkTokenAge(
 
     return {
       token_age_hours: Math.max(0, ageHours),
+      token_age_minutes: Math.max(0, Math.round(ageMs / 60_000)),
       created_at: new Date(createdMs).toISOString(),
     };
   } catch (err) {
     logger.warn({ err, mintAddress }, "Token age check failed");
-    return { token_age_hours: null, created_at: null };
+    return { token_age_hours: null, token_age_minutes: null, created_at: null };
   }
 }

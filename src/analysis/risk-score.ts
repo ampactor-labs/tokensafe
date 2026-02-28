@@ -5,6 +5,8 @@ import type { MetadataResult } from "./checks/metadata.js";
 import type { TokenAgeResult } from "./checks/token-age.js";
 import type { HoneypotResult } from "./checks/honeypot.js";
 
+export const METHODOLOGY_VERSION = "1.0.0";
+
 export type RiskLevel = "LOW" | "MODERATE" | "HIGH" | "CRITICAL" | "EXTREME";
 
 export interface RiskScoreInput {
@@ -28,6 +30,14 @@ export interface RiskScoreResult {
 const TRUSTED_MINT_AUTHORITIES = new Set([
   // Circle USDC mint authority — verified from mainnet getAccountInfo
   "BJE5MMbqXjVwjAF7oxwPYXnTXDyspzZyt4vwenNw5ruG",
+  // Tether USDT mint authority — verified from mainnet getAccountInfo
+  "Q6XprfkF8RQQKoQVG33xT88H7wi8Uk1B1CC7YAs69Gi",
+  // Marinade mSOL stake pool — verified from mainnet getAccountInfo
+  "3JLPCS1qM2zRw3Dp6V4hZnYHd4toMNPkNesXdX9tg6KM",
+  // Jito jitoSOL stake pool — verified from mainnet getAccountInfo
+  "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS",
+  // SolBlaze bSOL stake pool — verified from mainnet getAccountInfo
+  "6WecYymEARvjG5ZyqkrVQ6YkhPfujNzWpSPwNKXHCbV2",
 ]);
 
 /**
@@ -37,6 +47,8 @@ const TRUSTED_MINT_AUTHORITIES = new Set([
 const TRUSTED_FREEZE_AUTHORITIES = new Set([
   // Circle USDC freeze authority — verified from mainnet getAccountInfo
   "7dGbd2QZcCKcTndnHcTL8q7SMVXAkp688NTQYwrRCrar",
+  // Tether USDT freeze authority — verified from mainnet getAccountInfo
+  "Q6XprfkF8RQQKoQVG33xT88H7wi8Uk1B1CC7YAs69Gi",
 ]);
 
 export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
@@ -124,7 +136,11 @@ export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
 
   // Honeypot
   if (input.honeypot) {
-    if (!input.honeypot.can_sell) score += 30;
+    if (input.honeypot.can_sell === false) {
+      score += 30; // Confirmed honeypot — buy exists, sell does not
+    } else if (input.honeypot.can_sell === null) {
+      score += 10; // No Jupiter route — unknown, flag uncertainty
+    }
     if (
       input.honeypot.sell_tax_bps != null &&
       input.honeypot.sell_tax_bps > 1000
@@ -138,7 +154,7 @@ export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
   return { risk_score: score, risk_level };
 }
 
-export function generateRiskSummary(input: RiskScoreInput): string {
+export function getRiskFactors(input: RiskScoreInput): string[] {
   const flags: string[] = [];
 
   if (
@@ -189,12 +205,19 @@ export function generateRiskSummary(input: RiskScoreInput): string {
     if (ext.name === "TransferHook" && ext.transfer_hook_program)
       flags.push("transfer hook set — arbitrary code runs on every transfer");
   }
-  if (input.honeypot && !input.honeypot.can_sell)
+  if (input.honeypot && input.honeypot.can_sell === false)
     flags.push("cannot sell (honeypot)");
+  if (input.honeypot && input.honeypot.can_sell === null)
+    flags.push("sell-side unverifiable (no Jupiter route)");
   if (input.honeypot?.sell_tax_bps != null && input.honeypot.sell_tax_bps > 0) {
     flags.push(`${(input.honeypot.sell_tax_bps / 100).toFixed(1)}% sell tax`);
   }
 
+  return flags;
+}
+
+export function generateRiskSummary(input: RiskScoreInput): string {
+  const flags = getRiskFactors(input);
   if (flags.length === 0) return "No risk factors detected";
   return flags.join(", ");
 }

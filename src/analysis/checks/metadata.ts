@@ -9,6 +9,7 @@ const METAPLEX_PROGRAM_ID = new PublicKey(
 export interface MetadataResult {
   name: string | null;
   symbol: string | null;
+  update_authority: string | null;
   mutable: boolean;
   has_uri: boolean;
   uri: string | null;
@@ -45,6 +46,7 @@ export async function checkMetadata(
     return {
       name: parsed.name,
       symbol: parsed.symbol,
+      update_authority: parsed.updateAuthority,
       mutable: parsed.isMutable,
       has_uri: parsed.uri !== null && parsed.uri.length > 0,
       uri: parsed.uri,
@@ -59,6 +61,7 @@ export async function checkMetadata(
 interface ParsedMetadata {
   name: string | null;
   symbol: string | null;
+  updateAuthority: string | null;
   uri: string | null;
   isMutable: boolean;
 }
@@ -67,6 +70,10 @@ interface ParsedMetadata {
 // key(1) + update_authority(32) + mint(32) + name(borsh_str) + symbol(borsh_str) + uri(borsh_str)
 // + seller_fee_basis_points(2) + creators(option<vec<creator>>) + primary_sale_happened(1) + is_mutable(1)
 function parseMetadataAccount(data: Buffer): ParsedMetadata {
+  // Read update_authority at offset 1 (after key byte)
+  const updateAuthorityBytes = data.subarray(1, 33);
+  const updateAuthority = new PublicKey(updateAuthorityBytes).toBase58();
+
   let offset = 1 + 32 + 32; // skip key + update_authority + mint
 
   const [name, o1] = readBorshString(data, offset);
@@ -94,6 +101,7 @@ function parseMetadataAccount(data: Buffer): ParsedMetadata {
   return {
     name: clean(name),
     symbol: clean(symbol),
+    updateAuthority,
     uri: clean(uri),
     isMutable,
   };

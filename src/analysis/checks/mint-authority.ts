@@ -23,6 +23,8 @@ export interface MintAccountResult {
   supplyRaw: bigint;
   decimals: number;
   isToken2022: boolean;
+  tokenProgram: string;
+  rpcSlot: number;
   extensions: ExtensionInfo[];
 }
 
@@ -32,14 +34,16 @@ export async function checkMintAccount(
   const connection = getConnection();
   const mintPubkey = new PublicKey(mintAddress);
 
-  // Detect which token program owns this mint
-  const accountInfo = await connection.getAccountInfo(mintPubkey);
+  // Detect which token program owns this mint (with slot for auditability)
+  const { value: accountInfo, context } =
+    await connection.getAccountInfoAndContext(mintPubkey);
   if (!accountInfo) {
     throw new ApiError(
       "TOKEN_NOT_FOUND",
       `Token mint ${mintAddress} not found on chain`,
     );
   }
+  const rpcSlot = context.slot;
 
   const ownerStr = accountInfo.owner.toBase58();
   const isToken2022 = ownerStr === TOKEN_2022_PROGRAM.toBase58();
@@ -55,6 +59,8 @@ export async function checkMintAccount(
     supplyRaw: mint.supply,
     decimals: mint.decimals,
     isToken2022,
+    tokenProgram: ownerStr,
+    rpcSlot,
     extensions,
   };
 }

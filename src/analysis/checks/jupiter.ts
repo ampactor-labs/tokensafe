@@ -11,7 +11,8 @@ export const SOL_MINT = "So11111111111111111111111111111111111111112";
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 /** 0.1 SOL — small enough for low price impact, large enough for meaningful quote */
-const BUY_AMOUNT_LAMPORTS = "100000000";
+export const BUY_AMOUNT_LAMPORTS = "100000000";
+export const BUY_AMOUNT_LAMPORTS_BIGINT = 100_000_000n;
 
 export interface JupiterQuote {
   outAmount: string;

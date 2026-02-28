@@ -31,7 +31,7 @@ interface ChangeRule {
   severity: ChangeSeverity;
 }
 
-const RISK_ORDER = ["SAFE", "HIGH", "CRITICAL"];
+const RISK_ORDER = ["SAFE", "LOW", "MODERATE", "HIGH", "CRITICAL", "EXTREME"];
 
 function riskWorsened(prev: string, curr: string): boolean {
   return RISK_ORDER.indexOf(curr) > RISK_ORDER.indexOf(prev);
@@ -69,18 +69,14 @@ const CHANGE_RULES: ChangeRule[] = [
     path: "checks.top_holders.top_10_percentage",
     extract: (r) => r.checks.top_holders.top_10_percentage,
     isSignificant: (p, c) =>
-      typeof p === "number" &&
-      typeof c === "number" &&
-      Math.abs(c - p) > 5.0,
+      typeof p === "number" && typeof c === "number" && Math.abs(c - p) > 5.0,
     severity: "HIGH",
   },
   {
     path: "checks.top_holders.top_1_percentage",
     extract: (r) => r.checks.top_holders.top_1_percentage,
     isSignificant: (p, c) =>
-      typeof p === "number" &&
-      typeof c === "number" &&
-      Math.abs(c - p) > 5.0,
+      typeof p === "number" && typeof c === "number" && Math.abs(c - p) > 5.0,
     severity: "HIGH",
   },
   {
@@ -113,9 +109,7 @@ const CHANGE_RULES: ChangeRule[] = [
     path: "checks.liquidity.lp_lock_percentage",
     extract: (r) => r.checks.liquidity?.lp_lock_percentage ?? null,
     isSignificant: (p, c) =>
-      typeof p === "number" &&
-      typeof c === "number" &&
-      p - c > 20,
+      typeof p === "number" && typeof c === "number" && p - c > 20,
     severity: "HIGH",
   },
   // Price impact spike — liquidity draining
@@ -123,9 +117,7 @@ const CHANGE_RULES: ChangeRule[] = [
     path: "checks.liquidity.price_impact_pct",
     extract: (r) => r.checks.liquidity?.price_impact_pct ?? null,
     isSignificant: (p, c) =>
-      typeof p === "number" &&
-      typeof c === "number" &&
-      c - p > 10,
+      typeof p === "number" && typeof c === "number" && c - p > 10,
     severity: "HIGH",
   },
   // Liquidity rating degradation
@@ -160,11 +152,7 @@ const CHANGE_RULES: ChangeRule[] = [
     extract: (r) => r.checks.honeypot?.sell_tax_bps ?? null,
     isSignificant: (p, c) => {
       if (p === null && c !== null && (c as number) > 0) return true;
-      if (
-        typeof p === "number" &&
-        typeof c === "number" &&
-        c - p > 500
-      )
+      if (typeof p === "number" && typeof c === "number" && c - p > 500)
         return true;
       return false;
     },
@@ -278,11 +266,12 @@ export function generateAlerts(
   }
 
   // Risk score delta alert if significant and not already explained by field changes
-  if (Math.abs(changes.risk_score_delta) > 10 && changes.changed_fields.length === 0) {
-    const direction =
-      changes.risk_score_delta > 0 ? "increased" : "decreased";
-    const newScore =
-      changes.previous_risk_score + changes.risk_score_delta;
+  if (
+    Math.abs(changes.risk_score_delta) > 10 &&
+    changes.changed_fields.length === 0
+  ) {
+    const direction = changes.risk_score_delta > 0 ? "increased" : "decreased";
+    const newScore = changes.previous_risk_score + changes.risk_score_delta;
     alerts.push({
       mint,
       symbol,
@@ -294,8 +283,7 @@ export function generateAlerts(
   // Sort by severity: CRITICAL first
   alerts.sort(
     (a, b) =>
-      SEVERITY_ORDER.indexOf(a.severity) -
-      SEVERITY_ORDER.indexOf(b.severity),
+      SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity),
   );
 
   return alerts;

@@ -16,6 +16,8 @@ export interface LiquidityResult {
   lp_locked: boolean | null;
   lp_lock_percentage: number | null;
   lp_lock_expiry: string | null;
+  lp_mint: string | null;
+  lp_locker: string | null;
   risk: "SAFE" | "WARNING" | "HIGH" | "CRITICAL";
 }
 
@@ -63,6 +65,7 @@ interface JupiterData {
 interface LpLockResult {
   lp_locked: boolean;
   lp_lock_percentage: number;
+  lp_mint: string;
   locked_in: string | null;
 }
 
@@ -119,6 +122,8 @@ export async function checkLiquidity(
       lp_locked: lpLock?.lp_locked ?? null,
       lp_lock_percentage: lpLock?.lp_lock_percentage ?? null,
       lp_lock_expiry: null,
+      lp_mint: lpLock?.lp_mint ?? null,
+      lp_locker: lpLock?.locked_in ?? null,
       risk,
     };
   } catch (err) {
@@ -236,6 +241,7 @@ async function detectLpLock(poolAddress: string): Promise<LpLockResult | null> {
   return {
     lp_locked: lockedPct > 0,
     lp_lock_percentage: Math.round(lockedPct * 10) / 10,
+    lp_mint: lpMint.toBase58(),
     locked_in: lockedIn,
   };
 }
@@ -270,6 +276,8 @@ function noLiquidity(): LiquidityResult {
     lp_locked: null,
     lp_lock_percentage: null,
     lp_lock_expiry: null,
+    lp_mint: null,
+    lp_locker: null,
     risk: "CRITICAL",
   };
 }

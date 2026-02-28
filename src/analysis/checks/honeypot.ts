@@ -1,13 +1,12 @@
+import { BUY_AMOUNT_LAMPORTS_BIGINT } from "./jupiter.js";
 import type { JupiterQuote } from "./jupiter.js";
 
 export interface HoneypotResult {
-  can_sell: boolean;
+  can_sell: boolean | null;
   sell_tax_bps: number | null;
-  risk: "SAFE" | "WARNING" | "DANGEROUS";
+  note: string | null;
+  risk: "SAFE" | "WARNING" | "DANGEROUS" | "UNKNOWN";
 }
-
-/** Must match BUY_AMOUNT_LAMPORTS in jupiter.ts */
-const BUY_AMOUNT_LAMPORTS = 100_000_000n;
 
 /**
  * Below this threshold, measured sell tax is likely estimation noise
@@ -28,14 +27,27 @@ export function analyzeHoneypot(
   sellQuote: JupiterQuote | null,
 ): HoneypotResult {
   if (!buyQuote || !buyQuote.outAmount || buyQuote.outAmount === "0") {
-    return { can_sell: false, sell_tax_bps: null, risk: "DANGEROUS" };
+    // No Jupiter route at all — can't determine if token is sellable.
+    // Fresh tokens may not have Jupiter routes yet; don't call this a honeypot.
+    return {
+      can_sell: null,
+      sell_tax_bps: null,
+      note: "No Jupiter route available — token may be too new for sell-side verification",
+      risk: "UNKNOWN",
+    };
   }
 
   if (!sellQuote) {
-    return { can_sell: false, sell_tax_bps: null, risk: "DANGEROUS" };
+    // Buy route exists but sell route doesn't — confirmed honeypot.
+    return {
+      can_sell: false,
+      sell_tax_bps: null,
+      note: null,
+      risk: "DANGEROUS",
+    };
   }
 
-  const solSpent = BUY_AMOUNT_LAMPORTS;
+  const solSpent = BUY_AMOUNT_LAMPORTS_BIGINT;
   const solReturned = BigInt(sellQuote.outAmount);
 
   let sell_tax_bps: number | null = null;
@@ -71,5 +83,5 @@ export function analyzeHoneypot(
     risk = "WARNING"; // 5-10% sell tax
   }
 
-  return { can_sell: true, sell_tax_bps, risk };
+  return { can_sell: true, sell_tax_bps, note: null, risk };
 }

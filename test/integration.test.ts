@@ -54,6 +54,7 @@ function makeResult(overrides?: Partial<TokenCheckResult>): CheckTokenResponse {
         top_10_percentage: 12.5,
         top_1_percentage: 3.2,
         holder_count_estimate: 50000,
+        top_holders_detail: null,
         note: null,
         risk: "SAFE",
       },
@@ -66,14 +67,25 @@ function makeResult(overrides?: Partial<TokenCheckResult>): CheckTokenResponse {
         lp_locked: true,
         lp_lock_percentage: 95,
         lp_lock_expiry: null,
+        lp_mint: null,
+        lp_locker: null,
         risk: "SAFE",
       },
       metadata: null,
       honeypot: null,
       token_age_hours: 8760,
+      token_age_minutes: 525600,
+      token_program: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
       is_token_2022: false,
       token_2022_extensions: null,
     },
+    rpc_slot: 300000000,
+    methodology_version: "1.0.0",
+    risk_factors: [],
+    summary: "No risk factors detected",
+    degraded: false,
+    response_signature: "deadbeef",
+    signer_pubkey: "cafebabe",
     ...overrides,
   };
   return { result, fromCache: false };
@@ -131,6 +143,28 @@ describe("GET /health", () => {
     expect(res.body).toHaveProperty("uptime");
   });
 
+  it("includes signer_pubkey for response verification", async () => {
+    const res = await request(app).get("/health");
+    expect(res.body.signer_pubkey).toBeDefined();
+    expect(typeof res.body.signer_pubkey).toBe("string");
+    expect(res.body.signer_pubkey.length).toBe(64); // 32 bytes hex-encoded
+  });
+
+  it("includes api_versions with v1 endpoints", async () => {
+    const res = await request(app).get("/health");
+    expect(res.body.api_versions).toMatchObject({
+      v1: {
+        status: "active",
+        endpoints: expect.arrayContaining([
+          "/v1/check",
+          "/v1/check/lite",
+          "/v1/batch",
+          "/v1/monitor",
+        ]),
+      },
+    });
+  });
+
   it("includes X-Response-Time header", async () => {
     const res = await request(app).get("/health");
     expect(res.headers["x-response-time"]).toMatch(/^\d+ms$/);
@@ -153,6 +187,52 @@ describe("GET /v1/check", () => {
     expect(res.body.risk_score).toBe(15);
     expect(res.body.risk_level).toBe("LOW");
     expect(res.body.checks).toBeDefined();
+  });
+
+  it("includes methodology_version in response", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    const res = await request(app).get(`/v1/check?mint=${WSOL}`);
+    expect(res.body.methodology_version).toBe("1.0.0");
+  });
+
+  it("includes degraded: false when all checks succeed", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    const res = await request(app).get(`/v1/check?mint=${WSOL}`);
+    expect(res.body.degraded).toBe(false);
+  });
+
+  it("includes degraded: true when checks are unavailable", async () => {
+    mockCheckToken.mockResolvedValue(
+      makeResult({ degraded: true, summary: "No risk factors detected" }),
+    );
+    const res = await request(app).get(`/v1/check?mint=${WSOL}`);
+    expect(res.body.degraded).toBe(true);
+  });
+
+  it("includes response_signature and signer_pubkey", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    const res = await request(app).get(`/v1/check?mint=${WSOL}`);
+    expect(res.body.response_signature).toBeDefined();
+    expect(typeof res.body.response_signature).toBe("string");
+    expect(res.body.signer_pubkey).toBeDefined();
+    expect(typeof res.body.signer_pubkey).toBe("string");
+  });
+
+  it("includes risk_factors array and summary in response", async () => {
+    mockCheckToken.mockResolvedValue(
+      makeResult({
+        risk_factors: ["active mint authority", "no liquidity detected"],
+        summary: "active mint authority, no liquidity detected",
+      }),
+    );
+    const res = await request(app).get(`/v1/check?mint=${WSOL}`);
+    expect(res.body.risk_factors).toEqual([
+      "active mint authority",
+      "no liquidity detected",
+    ]);
+    expect(res.body.summary).toBe(
+      "active mint authority, no liquidity detected",
+    );
   });
 
   it("sets X-Cache: MISS on fresh result", async () => {
@@ -419,6 +499,105 @@ describe("GET /v1/monitor", () => {
     const res = await request(app).get("/v1/monitor?mints=bad");
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe("INVALID_MINT_ADDRESS");
+  });
+});
+
+describe("GET /v1/batch", () => {
+  it("returns 200 with batch results for valid mints", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    const res = await request(app).get(`/v1/batch?mints=${WSOL}`);
+    expect(res.status).toBe(200);
+    expect(res.body.token_count).toBe(1);
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].mint).toBe(WSOL);
+    expect(res.body.errors).toEqual([]);
+    expect(res.body.checked_at).toBeDefined();
+  });
+
+  it("returns multiple results for comma-separated mints", async () => {
+    mockCheckToken.mockImplementation(async (mint: string) => {
+      if (mint === WSOL) return makeResult();
+      return makeResult({ mint: BONK, name: "Bonk", symbol: "BONK" });
+    });
+    const res = await request(app).get(`/v1/batch?mints=${WSOL},${BONK}`);
+    expect(res.status).toBe(200);
+    expect(res.body.token_count).toBe(2);
+    expect(res.body.results).toHaveLength(2);
+  });
+
+  it("returns partial results + errors when a token fails", async () => {
+    const { ApiError } = await import("../src/utils/errors.js");
+    mockCheckToken.mockImplementation(async (mint: string) => {
+      if (mint === WSOL) return makeResult();
+      throw new ApiError("RPC_ERROR", "Failed to fetch mint account from RPC");
+    });
+    const res = await request(app).get(`/v1/batch?mints=${WSOL},${BONK}`);
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].mint).toBe(WSOL);
+    expect(res.body.errors).toHaveLength(1);
+    expect(res.body.errors[0].mint).toBe(BONK);
+    expect(res.body.errors[0].error.code).toBe("RPC_ERROR");
+  });
+
+  it("returns 400 for missing mints param", async () => {
+    const res = await request(app).get("/v1/batch");
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_MINT_ADDRESS");
+  });
+
+  it("returns 400 for empty mints param", async () => {
+    const res = await request(app).get("/v1/batch?mints=");
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_MINT_ADDRESS");
+  });
+
+  it("returns 400 for more than 10 mints", async () => {
+    const baseMints = [
+      WSOL,
+      BONK,
+      "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs",
+      "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So",
+      "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+      "7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj",
+      "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+      "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",
+      "AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB",
+      "9n4nbM75f5Ui33ZbPYXn59EwSgE8CGsHtAeTH5YFeJ9E",
+    ];
+    const res = await request(app).get(
+      `/v1/batch?mints=${baseMints.join(",")}`,
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("TOO_MANY_MINTS");
+  });
+
+  it("returns 400 for invalid base58 mint address", async () => {
+    const res = await request(app).get("/v1/batch?mints=not-valid-base58!!!");
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_MINT_ADDRESS");
+  });
+
+  it("deduplicates repeated mints", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    const res = await request(app).get(
+      `/v1/batch?mints=${WSOL},${WSOL},${WSOL}`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.token_count).toBe(1);
+    expect(res.body.results).toHaveLength(1);
+    expect(mockCheckToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles all tokens failing gracefully", async () => {
+    mockCheckToken.mockRejectedValue(new Error("network error"));
+    const res = await request(app).get(`/v1/batch?mints=${WSOL}`);
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(0);
+    expect(res.body.errors).toHaveLength(1);
+    expect(res.body.errors[0].mint).toBe(WSOL);
+    expect(res.body.errors[0].error.code).toBe("INTERNAL_ERROR");
   });
 });
 

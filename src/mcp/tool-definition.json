@@ -28,6 +28,20 @@
     }
   },
   {
+    "name": "solana_token_batch_check",
+    "description": "Check up to 10 Solana tokens at once. Returns full safety analysis for each token — mint/freeze authority, top holders, liquidity, honeypot detection, metadata, token age, Token-2022 extensions, and risk score. 20% cheaper than individual checks at $0.008 USDC via x402. Use for portfolio screening, watchlist evaluation, or comparing multiple tokens.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "mint_addresses": {
+          "type": "string",
+          "description": "Comma-separated list of Solana token mint addresses in base58 format (max 10)"
+        }
+      },
+      "required": ["mint_addresses"]
+    }
+  },
+  {
     "name": "solana_token_portfolio_monitor",
     "description": "Monitor up to 10 Solana tokens at once. Returns current safety state for each token plus delta detection — what changed since the last check (authority changes, holder concentration shifts, liquidity movements, risk score changes). Generates severity-ranked alerts for critical changes like authority activations or liquidity removals. Costs $0.005 USDC via x402. Use for portfolio surveillance and automated risk alerts.",
     "inputSchema": {

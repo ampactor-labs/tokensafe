@@ -15,7 +15,10 @@ vi.mock("../src/utils/logger.js", () => ({
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
-import { checkLiquidity, KNOWN_LOCKERS } from "../src/analysis/checks/liquidity.js";
+import {
+  checkLiquidity,
+  KNOWN_LOCKERS,
+} from "../src/analysis/checks/liquidity.js";
 import { getConnection } from "../src/solana/rpc.js";
 
 const mockGetConnection = vi.mocked(getConnection);
@@ -24,11 +27,13 @@ const FAKE_MINT = "So11111111111111111111111111111111111111112";
 const RAYDIUM_AMM_V4 = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
 
 // Helper: build a Jupiter quote response
-function jupiterResponse(overrides: {
-  label?: string;
-  ammKey?: string;
-  priceImpactPct?: string;
-} = {}) {
+function jupiterResponse(
+  overrides: {
+    label?: string;
+    ammKey?: string;
+    priceImpactPct?: string;
+  } = {},
+) {
   return {
     ok: true,
     json: () =>
@@ -37,7 +42,9 @@ function jupiterResponse(overrides: {
           {
             swapInfo: {
               label: overrides.label ?? "Raydium",
-              ammKey: overrides.ammKey ?? "PoolAddress111111111111111111111111111111111",
+              ammKey:
+                overrides.ammKey ??
+                "PoolAddress111111111111111111111111111111111",
             },
           },
         ],
@@ -110,7 +117,9 @@ describe("checkLiquidity", () => {
     const result = await checkLiquidity(FAKE_MINT);
     expect(result.has_liquidity).toBe(true);
     expect(result.primary_pool).toBe("Orca");
-    expect(result.pool_address).toBe("OrcaPool111111111111111111111111111111111111");
+    expect(result.pool_address).toBe(
+      "OrcaPool111111111111111111111111111111111111",
+    );
     expect(result.price_impact_pct).toBe(2.5);
     expect(result.liquidity_rating).toBe("MODERATE"); // 1 <= 2.5 < 5
   });
@@ -150,6 +159,52 @@ describe("checkLiquidity", () => {
   // LP lock detection — Raydium AMM v4
   // -------------------------------------------------------------------------
 
+  it("includes lp_mint and lp_locker when locked LP detected", async () => {
+    const lpMint = PublicKey.unique();
+    const streamflowPubkey = new PublicKey(
+      "strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m",
+    );
+    const tokenAccount = PublicKey.unique();
+
+    mockFetch.mockResolvedValue(
+      jupiterResponse({
+        label: "Raydium",
+        ammKey: PublicKey.unique().toBase58(),
+      }),
+    );
+
+    const mockConnection = {
+      getAccountInfo: vi.fn().mockResolvedValue(makePoolAccount(lpMint)),
+      getTokenLargestAccounts: vi.fn().mockResolvedValue({
+        value: [
+          {
+            address: tokenAccount,
+            amount: "1000000",
+            decimals: 6,
+            uiAmount: 1,
+          },
+        ],
+      }),
+      getMultipleAccountsInfo: vi
+        .fn()
+        .mockResolvedValue([makeTokenAccountInfo(streamflowPubkey)]),
+    };
+    mockGetConnection.mockReturnValue(mockConnection as any);
+
+    const result = await checkLiquidity(FAKE_MINT);
+    expect(result.lp_mint).toBe(lpMint.toBase58());
+    expect(result.lp_locker).toBe("Streamflow");
+  });
+
+  it("returns lp_mint=null and lp_locker=null for non-Raydium pools", async () => {
+    mockFetch.mockResolvedValue(
+      jupiterResponse({ label: "Orca", ammKey: "OrcaPool1111" }),
+    );
+    const result = await checkLiquidity(FAKE_MINT);
+    expect(result.lp_mint).toBeNull();
+    expect(result.lp_locker).toBeNull();
+  });
+
   it("detects locked LP when top holder is owned by Streamflow", async () => {
     const lpMint = PublicKey.unique();
     const streamflowPubkey = new PublicKey(
@@ -158,14 +213,22 @@ describe("checkLiquidity", () => {
     const tokenAccount = PublicKey.unique();
 
     mockFetch.mockResolvedValue(
-      jupiterResponse({ label: "Raydium", ammKey: PublicKey.unique().toBase58() }),
+      jupiterResponse({
+        label: "Raydium",
+        ammKey: PublicKey.unique().toBase58(),
+      }),
     );
 
     const mockConnection = {
       getAccountInfo: vi.fn().mockResolvedValue(makePoolAccount(lpMint)),
       getTokenLargestAccounts: vi.fn().mockResolvedValue({
         value: [
-          { address: tokenAccount, amount: "1000000", decimals: 6, uiAmount: 1 },
+          {
+            address: tokenAccount,
+            amount: "1000000",
+            decimals: 6,
+            uiAmount: 1,
+          },
         ],
       }),
       getMultipleAccountsInfo: vi
@@ -187,14 +250,22 @@ describe("checkLiquidity", () => {
     const tokenAccount = PublicKey.unique();
 
     mockFetch.mockResolvedValue(
-      jupiterResponse({ label: "Raydium", ammKey: PublicKey.unique().toBase58() }),
+      jupiterResponse({
+        label: "Raydium",
+        ammKey: PublicKey.unique().toBase58(),
+      }),
     );
 
     const mockConnection = {
       getAccountInfo: vi.fn().mockResolvedValue(makePoolAccount(lpMint)),
       getTokenLargestAccounts: vi.fn().mockResolvedValue({
         value: [
-          { address: tokenAccount, amount: "800000", decimals: 6, uiAmount: 0.8 },
+          {
+            address: tokenAccount,
+            amount: "800000",
+            decimals: 6,
+            uiAmount: 0.8,
+          },
         ],
       }),
       getMultipleAccountsInfo: vi
@@ -213,14 +284,22 @@ describe("checkLiquidity", () => {
     const tokenAccount = PublicKey.unique();
 
     mockFetch.mockResolvedValue(
-      jupiterResponse({ label: "Raydium", ammKey: PublicKey.unique().toBase58() }),
+      jupiterResponse({
+        label: "Raydium",
+        ammKey: PublicKey.unique().toBase58(),
+      }),
     );
 
     const mockConnection = {
       getAccountInfo: vi.fn().mockResolvedValue(makePoolAccount(lpMint)),
       getTokenLargestAccounts: vi.fn().mockResolvedValue({
         value: [
-          { address: tokenAccount, amount: "500000", decimals: 6, uiAmount: 0.5 },
+          {
+            address: tokenAccount,
+            amount: "500000",
+            decimals: 6,
+            uiAmount: 0.5,
+          },
         ],
       }),
       getMultipleAccountsInfo: vi
@@ -236,7 +315,10 @@ describe("checkLiquidity", () => {
 
   it("returns lp_locked=null when pool account has wrong length", async () => {
     mockFetch.mockResolvedValue(
-      jupiterResponse({ label: "Raydium", ammKey: PublicKey.unique().toBase58() }),
+      jupiterResponse({
+        label: "Raydium",
+        ammKey: PublicKey.unique().toBase58(),
+      }),
     );
 
     const mockConnection = {
@@ -259,7 +341,10 @@ describe("checkLiquidity", () => {
 
   it("returns lp_locked=null when pool account is null", async () => {
     mockFetch.mockResolvedValue(
-      jupiterResponse({ label: "Raydium", ammKey: PublicKey.unique().toBase58() }),
+      jupiterResponse({
+        label: "Raydium",
+        ammKey: PublicKey.unique().toBase58(),
+      }),
     );
 
     const mockConnection = {
@@ -275,7 +360,10 @@ describe("checkLiquidity", () => {
 
   it("handles RPC error in LP lock detection gracefully", async () => {
     mockFetch.mockResolvedValue(
-      jupiterResponse({ label: "Raydium", ammKey: PublicKey.unique().toBase58() }),
+      jupiterResponse({
+        label: "Raydium",
+        ammKey: PublicKey.unique().toBase58(),
+      }),
     );
 
     const mockConnection = {
@@ -296,15 +384,28 @@ describe("checkLiquidity", () => {
     const tokenAccount2 = PublicKey.unique();
 
     mockFetch.mockResolvedValue(
-      jupiterResponse({ label: "Raydium", ammKey: PublicKey.unique().toBase58() }),
+      jupiterResponse({
+        label: "Raydium",
+        ammKey: PublicKey.unique().toBase58(),
+      }),
     );
 
     const mockConnection = {
       getAccountInfo: vi.fn().mockResolvedValue(makePoolAccount(lpMint)),
       getTokenLargestAccounts: vi.fn().mockResolvedValue({
         value: [
-          { address: tokenAccount1, amount: "500000", decimals: 6, uiAmount: 0.5 },
-          { address: tokenAccount2, amount: "300000", decimals: 6, uiAmount: 0.3 },
+          {
+            address: tokenAccount1,
+            amount: "500000",
+            decimals: 6,
+            uiAmount: 0.5,
+          },
+          {
+            address: tokenAccount2,
+            amount: "300000",
+            decimals: 6,
+            uiAmount: 0.3,
+          },
         ],
       }),
       getMultipleAccountsInfo: vi
@@ -343,7 +444,9 @@ describe("checkLiquidity", () => {
 
 describe("KNOWN_LOCKERS", () => {
   it("contains Streamflow address", () => {
-    expect(KNOWN_LOCKERS.has("strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m")).toBe(true);
+    expect(
+      KNOWN_LOCKERS.has("strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m"),
+    ).toBe(true);
   });
 
   it("contains at least 9 locker addresses", () => {

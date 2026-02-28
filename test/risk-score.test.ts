@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   computeRiskScore,
+  getRiskFactors,
   generateRiskSummary,
   type RiskScoreInput,
 } from "../src/analysis/risk-score.js";
@@ -20,6 +21,8 @@ function makeMint(
     supplyRaw: 1000000000n,
     decimals: 9,
     isToken2022: false,
+    tokenProgram: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    rpcSlot: 300000000,
     extensions: [],
     ...overrides,
   };
@@ -32,6 +35,7 @@ function makeHolders(
     top_10_percentage: 10,
     top_1_percentage: 2,
     holder_count_estimate: null,
+    top_holders_detail: null,
     note: null,
     risk: "SAFE",
     ...overrides,
@@ -50,6 +54,8 @@ function makeLiquidity(
     lp_locked: null,
     lp_lock_percentage: null,
     lp_lock_expiry: null,
+    lp_mint: null,
+    lp_locker: null,
     risk: "SAFE",
     ...overrides,
   };
@@ -59,6 +65,7 @@ function makeMetadata(overrides: Partial<MetadataResult> = {}): MetadataResult {
   return {
     name: "Test Token",
     symbol: "TEST",
+    update_authority: null,
     mutable: false,
     has_uri: true,
     uri: "https://example.com/meta.json",
@@ -70,6 +77,7 @@ function makeMetadata(overrides: Partial<MetadataResult> = {}): MetadataResult {
 function makeAge(overrides: Partial<TokenAgeResult> = {}): TokenAgeResult {
   return {
     token_age_hours: 720,
+    token_age_minutes: 43200,
     created_at: "2025-01-01T00:00:00.000Z",
     ...overrides,
   };
@@ -79,6 +87,7 @@ function makeHoneypot(overrides: Partial<HoneypotResult> = {}): HoneypotResult {
   return {
     can_sell: true,
     sell_tax_bps: null,
+    note: null,
     risk: "SAFE",
     ...overrides,
   };
@@ -342,13 +351,26 @@ describe("computeRiskScore", () => {
   });
 
   // --- Honeypot ---
-  it("adds 30 for honeypot can't sell", () => {
+  it("adds 30 for honeypot can't sell (confirmed: buy route exists, sell route doesn't)", () => {
     const result = computeRiskScore(
       makeInput({
         honeypot: makeHoneypot({ can_sell: false, risk: "DANGEROUS" }),
       }),
     );
     expect(result.risk_score).toBe(30);
+  });
+
+  it("adds 10 for honeypot can_sell null (no Jupiter route — unknown, not confirmed)", () => {
+    const result = computeRiskScore(
+      makeInput({
+        honeypot: makeHoneypot({
+          can_sell: null,
+          risk: "UNKNOWN",
+          note: "No Jupiter route available — token may be too new for sell-side verification",
+        }),
+      }),
+    );
+    expect(result.risk_score).toBe(10);
   });
 
   it("adds 15 for sell tax > 10%", () => {
@@ -421,11 +443,55 @@ describe("computeRiskScore", () => {
     expect(result.risk_score).toBe(0);
   });
 
-  it("skips mint authority penalty for trusted authorities", () => {
+  it("skips mint authority penalty for trusted authorities (USDC)", () => {
     const result = computeRiskScore(
       makeInput({
         mint: makeMint({
           mintAuthority: "BJE5MMbqXjVwjAF7oxwPYXnTXDyspzZyt4vwenNw5ruG",
+        }),
+      }),
+    );
+    expect(result.risk_score).toBe(0);
+  });
+
+  it("skips mint authority penalty for USDT", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          mintAuthority: "Q6XprfkF8RQQKoQVG33xT88H7wi8Uk1B1CC7YAs69Gi",
+        }),
+      }),
+    );
+    expect(result.risk_score).toBe(0);
+  });
+
+  it("skips freeze authority penalty for USDT", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          freezeAuthority: "Q6XprfkF8RQQKoQVG33xT88H7wi8Uk1B1CC7YAs69Gi",
+        }),
+      }),
+    );
+    expect(result.risk_score).toBe(0);
+  });
+
+  it("skips mint authority penalty for mSOL stake pool", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          mintAuthority: "3JLPCS1qM2zRw3Dp6V4hZnYHd4toMNPkNesXdX9tg6KM",
+        }),
+      }),
+    );
+    expect(result.risk_score).toBe(0);
+  });
+
+  it("skips mint authority penalty for jitoSOL stake pool", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          mintAuthority: "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS",
         }),
       }),
     );
@@ -541,13 +607,26 @@ describe("generateRiskSummary", () => {
     expect(summary).not.toContain("LP not locked");
   });
 
-  it("flags honeypot", () => {
+  it("flags honeypot when can_sell is false", () => {
     const summary = generateRiskSummary(
       makeInput({
         honeypot: makeHoneypot({ can_sell: false, risk: "DANGEROUS" }),
       }),
     );
     expect(summary).toContain("cannot sell (honeypot)");
+  });
+
+  it("flags sell-side unverifiable when can_sell is null", () => {
+    const summary = generateRiskSummary(
+      makeInput({
+        honeypot: makeHoneypot({
+          can_sell: null,
+          risk: "UNKNOWN",
+          note: "No Jupiter route available — token may be too new for sell-side verification",
+        }),
+      }),
+    );
+    expect(summary).toContain("sell-side unverifiable");
   });
 
   it("includes sell tax percentage", () => {
@@ -592,5 +671,34 @@ describe("generateRiskSummary", () => {
       }),
     );
     expect(summary).toBe("No risk factors detected");
+  });
+});
+
+describe("getRiskFactors", () => {
+  it("returns empty array when everything is safe", () => {
+    const factors = getRiskFactors(makeInput());
+    expect(factors).toEqual([]);
+  });
+
+  it("returns array of risk factor strings", () => {
+    const factors = getRiskFactors(
+      makeInput({
+        mint: makeMint({ mintAuthority: "A", freezeAuthority: "B" }),
+        liquidity: makeLiquidity({ has_liquidity: false }),
+      }),
+    );
+    expect(factors).toContain("active mint authority");
+    expect(factors).toContain("active freeze authority");
+    expect(factors).toContain("no liquidity detected");
+    expect(factors).toHaveLength(3);
+  });
+
+  it("generateRiskSummary joins factors from getRiskFactors", () => {
+    const input = makeInput({
+      mint: makeMint({ mintAuthority: "A" }),
+    });
+    const factors = getRiskFactors(input);
+    const summary = generateRiskSummary(input);
+    expect(summary).toBe(factors.join(", "));
   });
 });

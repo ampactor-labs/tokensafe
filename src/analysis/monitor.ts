@@ -22,6 +22,11 @@ export interface MonitorTokenResult {
   risk_score: number;
   risk_level: string;
   checks: TokenCheckResult["checks"];
+  rpc_slot: number;
+  methodology_version: string;
+  risk_factors: string[];
+  summary: string;
+  degraded: boolean;
   changes: ChangeReport | null;
 }
 
@@ -40,9 +45,7 @@ export interface MonitorResponse {
 
 const SEVERITY_ORDER = ["CRITICAL", "HIGH", "WARNING", "INFO"];
 
-export async function monitorTokens(
-  mints: string[],
-): Promise<MonitorResponse> {
+export async function monitorTokens(mints: string[]): Promise<MonitorResponse> {
   // Validate all mints upfront
   for (const mint of mints) {
     try {
@@ -98,18 +101,20 @@ export async function monitorTokens(
     // Update monitor history with current snapshot
     setMonitorHistory(mint, result);
 
-    // Strip internal _summary field
-    const { _summary, ...publicResult } = result;
-
     tokens.push({
-      mint: publicResult.mint,
-      name: publicResult.name,
-      symbol: publicResult.symbol,
-      checked_at: publicResult.checked_at,
-      cached_at: publicResult.cached_at,
-      risk_score: publicResult.risk_score,
-      risk_level: publicResult.risk_level,
-      checks: publicResult.checks,
+      mint: result.mint,
+      name: result.name,
+      symbol: result.symbol,
+      checked_at: result.checked_at,
+      cached_at: result.cached_at,
+      risk_score: result.risk_score,
+      risk_level: result.risk_level,
+      checks: result.checks,
+      rpc_slot: result.rpc_slot,
+      methodology_version: result.methodology_version,
+      risk_factors: result.risk_factors,
+      summary: result.summary,
+      degraded: result.degraded,
       changes,
     });
 
@@ -119,8 +124,7 @@ export async function monitorTokens(
   // Sort alerts: CRITICAL first
   alerts.sort(
     (a, b) =>
-      SEVERITY_ORDER.indexOf(a.severity) -
-      SEVERITY_ORDER.indexOf(b.severity),
+      SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity),
   );
 
   return {

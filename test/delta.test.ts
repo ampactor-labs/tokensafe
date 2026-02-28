@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  detectChanges,
-  generateAlerts,
-} from "../src/analysis/delta.js";
+import { detectChanges, generateAlerts } from "../src/analysis/delta.js";
 import type { TokenCheckResult } from "../src/analysis/token-checker.js";
 
 const WSOL = "So11111111111111111111111111111111111111112";
@@ -27,13 +24,16 @@ function makeCheckResult(
       },
       supply: { total: "999999999", decimals: 9 },
       top_holders: {
+        status: "OK" as const,
         top_10_percentage: 12.5,
         top_1_percentage: 3.2,
         holder_count_estimate: 50000,
+        top_holders_detail: null,
         note: null,
         risk: "SAFE",
       },
       liquidity: {
+        status: "OK" as const,
         has_liquidity: true,
         primary_pool: "Raydium",
         pool_address: null,
@@ -42,19 +42,38 @@ function makeCheckResult(
         lp_locked: true,
         lp_lock_percentage: 95,
         lp_lock_expiry: null,
+        lp_mint: null,
+        lp_locker: null,
         risk: "SAFE",
       },
       metadata: {
+        status: "OK" as const,
+        update_authority: null,
         mutable: false,
         has_uri: true,
         uri: "https://example.com/meta.json",
         risk: "SAFE",
       },
-      honeypot: { can_sell: true, sell_tax_bps: null, risk: "SAFE" },
+      honeypot: {
+        status: "OK" as const,
+        can_sell: true,
+        sell_tax_bps: null,
+        note: null,
+        risk: "SAFE",
+      },
       token_age_hours: 8760,
+      token_age_minutes: 525600,
+      token_program: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
       is_token_2022: false,
       token_2022_extensions: null,
     },
+    rpc_slot: 300000000,
+    methodology_version: "1.0.0",
+    risk_factors: [],
+    summary: "No risk factors detected",
+    degraded: false,
+    response_signature: "deadbeef",
+    signer_pubkey: "cafebabe",
     ...overrides,
   };
 }
@@ -172,6 +191,8 @@ describe("detectChanges", () => {
           lp_locked: null,
           lp_lock_percentage: null,
           lp_lock_expiry: null,
+          lp_mint: null,
+          lp_locker: null,
           risk: "CRITICAL",
         },
       },
@@ -197,6 +218,8 @@ describe("detectChanges", () => {
           lp_locked: null,
           lp_lock_percentage: null,
           lp_lock_expiry: null,
+          lp_mint: null,
+          lp_locker: null,
           risk: "CRITICAL",
         },
       },
@@ -218,7 +241,13 @@ describe("detectChanges", () => {
       risk_score: 45,
       checks: {
         ...makeCheckResult().checks,
-        honeypot: { can_sell: false, sell_tax_bps: null, risk: "DANGEROUS" },
+        honeypot: {
+          status: "OK" as const,
+          can_sell: false,
+          sell_tax_bps: null,
+          note: null,
+          risk: "DANGEROUS",
+        },
       },
     });
     const report = detectChanges(prev, curr)!;
@@ -234,7 +263,13 @@ describe("detectChanges", () => {
     const curr = makeCheckResult({
       checks: {
         ...makeCheckResult().checks,
-        honeypot: { can_sell: true, sell_tax_bps: 1000, risk: "SAFE" },
+        honeypot: {
+          status: "OK" as const,
+          can_sell: true,
+          sell_tax_bps: 1000,
+          note: null,
+          risk: "SAFE",
+        },
       },
     });
     const report = detectChanges(prev, curr)!;
@@ -251,6 +286,7 @@ describe("detectChanges", () => {
       checks: {
         ...makeCheckResult().checks,
         metadata: {
+          update_authority: null,
           mutable: true,
           has_uri: true,
           uri: "https://example.com/meta.json",
@@ -271,6 +307,7 @@ describe("detectChanges", () => {
       checks: {
         ...makeCheckResult().checks,
         metadata: {
+          update_authority: null,
           mutable: true,
           has_uri: true,
           uri: "https://example.com/meta.json",
@@ -462,6 +499,8 @@ describe("generateAlerts", () => {
           lp_locked: null,
           lp_lock_percentage: null,
           lp_lock_expiry: null,
+          lp_mint: null,
+          lp_locker: null,
           risk: "CRITICAL",
         },
       },
@@ -520,9 +559,7 @@ describe("generateAlerts", () => {
     const changes = detectChanges(prev, curr)!;
     const alerts = generateAlerts(WSOL, "SOL", changes);
     // Should have alerts for authority changes but NOT a generic risk score alert
-    const riskAlert = alerts.find((a) =>
-      a.message.includes("Risk score"),
-    );
+    const riskAlert = alerts.find((a) => a.message.includes("Risk score"));
     expect(riskAlert).toBeUndefined();
   });
 
