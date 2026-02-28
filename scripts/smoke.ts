@@ -11,10 +11,18 @@ async function check(name: string, fn: () => Promise<void>): Promise<void> {
     await fn();
     console.log(`  \x1b[32m✓\x1b[0m ${name}`);
     passed++;
-  } catch (err) {
-    console.log(`  \x1b[31m✗\x1b[0m ${name}`);
-    console.log(`    ${(err as Error).message}`);
-    failed++;
+  } catch (firstErr) {
+    // Retry once — Railway edge occasionally returns 502 under rapid sequential requests
+    try {
+      await new Promise((r) => setTimeout(r, 500));
+      await fn();
+      console.log(`  \x1b[32m✓\x1b[0m ${name} (retry)`);
+      passed++;
+    } catch (err) {
+      console.log(`  \x1b[31m✗\x1b[0m ${name}`);
+      console.log(`    ${(err as Error).message}`);
+      failed++;
+    }
   }
 }
 
