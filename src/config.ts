@@ -32,4 +32,5 @@ export const config = {
     process.env.LITE_RATE_LIMIT_PER_MINUTE || "10",
     10,
   ),
+  ownershipProof: process.env.X402_OWNERSHIP_PROOF || "",
 } as const;
