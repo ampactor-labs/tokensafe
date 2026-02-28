@@ -403,6 +403,50 @@ describe("checkMintAccount", () => {
     expect(result.isToken2022).toBe(true);
     expect(result.mintAuthority).toBe(SOME_PUBKEY.toBase58());
   });
+
+  it("handles TLV zero-padding between extensions without skipping real entries", async () => {
+    // Build a buffer with: MetadataPointer(18) + 2 bytes zero padding + TransferFeeConfig(1)
+    const base = Buffer.alloc(83); // 82 base + 1 account_type
+    const tlvParts: Buffer[] = [];
+
+    // Extension 1: MetadataPointer (typeId=18, 64 bytes)
+    const metaPtrHeader = Buffer.alloc(4);
+    metaPtrHeader.writeUInt16LE(18, 0);
+    metaPtrHeader.writeUInt16LE(64, 2);
+    tlvParts.push(metaPtrHeader, Buffer.alloc(64));
+
+    // 2-byte zero padding (typeId=0)
+    tlvParts.push(Buffer.alloc(2));
+
+    // Extension 2: TransferFeeConfig (typeId=1, 108 bytes)
+    const tfHeader = Buffer.alloc(4);
+    tfHeader.writeUInt16LE(1, 0);
+    tfHeader.writeUInt16LE(108, 2);
+    const tfValue = Buffer.alloc(108);
+    tfValue.writeUInt16LE(250, 106); // 2.5% fee
+    tlvParts.push(tfHeader, tfValue);
+
+    const data = Buffer.concat([base, ...tlvParts]);
+
+    conn.getAccountInfoAndContext.mockResolvedValue({
+      value: { owner: new PublicKey(TOKEN_2022_PROGRAM), data },
+      context: { slot: 300000020 },
+    });
+    (getMint as Mock).mockResolvedValue({
+      mintAuthority: null,
+      freezeAuthority: null,
+      supply: 0n,
+      decimals: 0,
+    });
+
+    const result = await checkMintAccount(MINT);
+    // Should find BOTH extensions, not skip the second one
+    const names = result.extensions.map((e) => e.name);
+    expect(names).toContain("MetadataPointer");
+    expect(names).toContain("TransferFeeConfig");
+    const tfExt = result.extensions.find((e) => e.name === "TransferFeeConfig");
+    expect(tfExt!.transfer_fee_bps).toBe(250);
+  });
 });
 
 // ════════════════════════════════════════════════════════════════════
@@ -513,6 +557,27 @@ describe("checkTopHolders", () => {
     conn.getTokenLargestAccounts.mockResolvedValue({ value: [] });
     const result = await checkTopHolders(MINT, 0n);
     expect(result.top_holders_detail).toBeNull();
+  });
+
+  it("returns SAFE with 5M estimate on 'Too many accounts' error", async () => {
+    conn.getTokenLargestAccounts.mockRejectedValue(
+      new Error("Too many accounts provided; max 500"),
+    );
+    const result = await checkTopHolders(MINT, 1_000_000_000_000n);
+    expect(result.risk).toBe("SAFE");
+    expect(result.holder_count_estimate).toBe(5_000_000);
+    expect(result.note).toContain("5M+");
+    expect(result.top_10_percentage).toBe(0);
+    expect(result.top_1_percentage).toBe(0);
+  });
+
+  it("re-throws non-Too-many-accounts errors", async () => {
+    conn.getTokenLargestAccounts.mockRejectedValue(
+      new Error("Connection timeout"),
+    );
+    await expect(checkTopHolders(MINT, 1000n)).rejects.toThrow(
+      "Connection timeout",
+    );
   });
 });
 
@@ -674,7 +739,7 @@ describe("checkTokenAge", () => {
     expect(result.token_age_minutes).toBeLessThanOrEqual(11);
   });
 
-  it("returns minimum age + established flag for 100-sig token", async () => {
+  it("returns null time fields + established flag for 100-sig token", async () => {
     const nowSec = Math.floor(Date.now() / 1000);
     const sigs = Array.from({ length: 100 }, (_, i) => ({
       blockTime: nowSec - i * 60,
@@ -682,11 +747,9 @@ describe("checkTokenAge", () => {
     conn.getSignaturesForAddress.mockResolvedValue(sigs);
     const result = await checkTokenAge(MINT);
     expect(result.established).toBe(true);
-    // Oldest sig is ~99 minutes ago
-    expect(result.token_age_minutes).toBeGreaterThanOrEqual(95);
-    expect(result.token_age_minutes).toBeLessThanOrEqual(105);
-    expect(result.token_age_hours).not.toBeNull();
-    expect(result.created_at).not.toBeNull();
+    expect(result.token_age_hours).toBeNull();
+    expect(result.token_age_minutes).toBeNull();
+    expect(result.created_at).toBeNull();
   });
 
   it("returns established=true with null age when oldest 100-sig has no blockTime", async () => {
@@ -911,6 +974,8 @@ function makeFullResult(
     degraded_checks: [],
     response_signature: "mock-signature",
     signer_pubkey: "mock-pubkey",
+    changes: null,
+    alerts: [],
     ...overrides,
   };
 }

@@ -2,8 +2,6 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { PublicKey } from "@solana/web3.js";
 import { checkToken, checkTokenLite } from "../analysis/token-checker.js";
-import { monitorTokens } from "../analysis/monitor.js";
-import { ApiError } from "../utils/errors.js";
 
 function validateMint(address: string): void {
   try {
@@ -11,22 +9,6 @@ function validateMint(address: string): void {
   } catch {
     throw new Error(`Invalid Solana mint address: ${address}`);
   }
-}
-
-function parseMintList(csv: string, max: number): string[] {
-  const mints = [
-    ...new Set(
-      csv
-        .split(",")
-        .map((m) => m.trim())
-        .filter(Boolean),
-    ),
-  ];
-  if (mints.length === 0) throw new Error("No valid mint addresses provided");
-  if (mints.length > max)
-    throw new Error(`Maximum ${max} mints, got ${mints.length}`);
-  for (const m of mints) validateMint(m);
-  return mints;
 }
 
 export function createMcpServer(): McpServer {
@@ -68,76 +50,6 @@ export function createMcpServer(): McpServer {
       const { result } = await checkToken(mint_address);
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result) }],
-      };
-    },
-  );
-
-  server.registerTool(
-    "solana_token_batch_check",
-    {
-      description:
-        "Check up to 10 Solana tokens at once. Returns full safety analysis for each token — mint/freeze authority, top holders, liquidity, honeypot detection, metadata, token age, Token-2022 extensions, and risk score. Use for portfolio screening, watchlist evaluation, or comparing multiple tokens.",
-      inputSchema: {
-        mint_addresses: z
-          .string()
-          .describe(
-            "Comma-separated Solana token mint addresses in base58 format (max 10)",
-          ),
-      },
-    },
-    async ({ mint_addresses }) => {
-      const mints = parseMintList(mint_addresses, 10);
-      const settled = await Promise.allSettled(mints.map((m) => checkToken(m)));
-
-      const results: unknown[] = [];
-      const errors: { mint: string; error: string }[] = [];
-      for (let i = 0; i < settled.length; i++) {
-        const outcome = settled[i];
-        if (outcome.status === "fulfilled") {
-          results.push(outcome.value.result);
-        } else {
-          const err = outcome.reason;
-          errors.push({
-            mint: mints[i],
-            error: err instanceof ApiError ? err.message : "Analysis failed",
-          });
-        }
-      }
-
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              checked_at: new Date().toISOString(),
-              token_count: mints.length,
-              results,
-              errors,
-            }),
-          },
-        ],
-      };
-    },
-  );
-
-  server.registerTool(
-    "solana_token_portfolio_monitor",
-    {
-      description:
-        "Monitor up to 10 Solana tokens at once. Returns current safety state for each token plus delta detection — what changed since the last check (authority changes, holder concentration shifts, liquidity movements, risk score changes). Generates severity-ranked alerts for critical changes like authority activations or liquidity removals. Use for portfolio surveillance and automated risk alerts.",
-      inputSchema: {
-        mint_addresses: z
-          .string()
-          .describe(
-            "Comma-separated Solana token mint addresses in base58 format (max 10)",
-          ),
-      },
-    },
-    async ({ mint_addresses }) => {
-      const mints = parseMintList(mint_addresses, 10);
-      const response = await monitorTokens(mints);
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(response) }],
       };
     },
   );

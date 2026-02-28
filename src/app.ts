@@ -7,9 +7,7 @@ import { logger } from "./utils/logger.js";
 import { ApiError } from "./utils/errors.js";
 import { x402Middleware } from "./x402/middleware.js";
 import { checkToken, checkTokenLite } from "./analysis/token-checker.js";
-import { monitorTokens } from "./analysis/monitor.js";
 import { cacheStats } from "./utils/cache.js";
-import { monitorCacheStats } from "./utils/monitor-cache.js";
 import { rateLimiter } from "./utils/rate-limit.js";
 import { getSignerPubkey } from "./utils/response-signer.js";
 import { createMcpServer } from "./mcp/server.js";
@@ -86,8 +84,6 @@ app.get("/.well-known/x402", (_req, res) => {
     version: 1,
     resources: [
       `${base}/v1/check?mint=So11111111111111111111111111111111111111112`,
-      `${base}/v1/batch?mints=So11111111111111111111111111111111111111112`,
-      `${base}/v1/monitor?mints=So11111111111111111111111111111111111111112`,
     ],
     ownershipProofs: config.ownershipProof ? [config.ownershipProof] : [],
     instructions: [
@@ -100,8 +96,6 @@ app.get("/.well-known/x402", (_req, res) => {
       "| Endpoint | Price | Description |",
       "|----------|-------|-------------|",
       "| `GET /v1/check?mint=<ADDR>` | $0.008 USDC | Full safety analysis |",
-      "| `GET /v1/batch?mints=<ADDR1>,<ADDR2>,...` | $0.04 USDC | Up to 10 tokens (50% discount) |",
-      "| `GET /v1/monitor?mints=<ADDR1>,<ADDR2>,...` | $0.008 USDC | Delta detection + alerts |",
       "| `GET /v1/check/lite?mint=<ADDR>` | Free | Risk score, name, symbol, extensions |",
       "| `GET /health` | Free | Server status |",
       "",
@@ -132,13 +126,12 @@ app.get("/health", healthRateLimiter, (_req, res) => {
     network: config.solanaNetwork,
     uptime: Math.floor((Date.now() - startTime) / 1000),
     cache: cacheStats(),
-    monitorCache: monitorCacheStats(),
     signer_pubkey: getSignerPubkey(),
     facilitator_url: config.facilitatorUrl,
     api_versions: {
       v1: {
         status: "active",
-        endpoints: ["/v1/check", "/v1/check/lite", "/v1/batch", "/v1/monitor"],
+        endpoints: ["/v1/check", "/v1/check/lite"],
       },
     },
   });
@@ -199,129 +192,7 @@ app.get("/v1/check", async (req, res, next) => {
   }
 });
 
-// 8. Batch check — gated by x402
-app.get("/v1/batch", async (req, res, next) => {
-  try {
-    const mintsParam = req.query.mints as string | undefined;
-    if (!mintsParam || mintsParam.trim().length === 0) {
-      throw new ApiError(
-        "INVALID_MINT_ADDRESS",
-        "Missing required query parameter: mints",
-      );
-    }
-
-    const mints = [
-      ...new Set(
-        mintsParam
-          .split(",")
-          .map((m) => m.trim())
-          .filter(Boolean),
-      ),
-    ];
-
-    if (mints.length === 0) {
-      throw new ApiError(
-        "INVALID_MINT_ADDRESS",
-        "No valid mint addresses provided",
-      );
-    }
-
-    if (mints.length > 10) {
-      throw new ApiError(
-        "TOO_MANY_MINTS",
-        `Maximum 10 mints per request, got ${mints.length}`,
-      );
-    }
-
-    // Validate all addresses before running any checks
-    for (const mint of mints) {
-      try {
-        new PublicKey(mint);
-      } catch {
-        throw new ApiError(
-          "INVALID_MINT_ADDRESS",
-          `Invalid Solana mint address: ${mint}`,
-        );
-      }
-    }
-
-    const settled = await Promise.allSettled(
-      mints.map((mint) => checkToken(mint)),
-    );
-
-    const results: any[] = [];
-    const errors: any[] = [];
-
-    for (let i = 0; i < settled.length; i++) {
-      const outcome = settled[i];
-      if (outcome.status === "fulfilled") {
-        res.setHeader("X-Cache", outcome.value.fromCache ? "HIT" : "MISS");
-        results.push(outcome.value.result);
-      } else {
-        const err = outcome.reason;
-        errors.push({
-          mint: mints[i],
-          error:
-            err instanceof ApiError
-              ? err.toJSON().error
-              : { code: "INTERNAL_ERROR", message: "Analysis failed" },
-        });
-      }
-    }
-
-    res.json({
-      checked_at: new Date().toISOString(),
-      token_count: mints.length,
-      results,
-      errors,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// 9. Portfolio monitor — gated by x402
-app.get("/v1/monitor", async (req, res, next) => {
-  try {
-    const mintsParam = req.query.mints as string | undefined;
-    if (!mintsParam || mintsParam.trim().length === 0) {
-      throw new ApiError(
-        "INVALID_MINT_ADDRESS",
-        "Missing required query parameter: mints",
-      );
-    }
-
-    const mints = [
-      ...new Set(
-        mintsParam
-          .split(",")
-          .map((m) => m.trim())
-          .filter(Boolean),
-      ),
-    ];
-
-    if (mints.length === 0) {
-      throw new ApiError(
-        "INVALID_MINT_ADDRESS",
-        "No valid mint addresses provided",
-      );
-    }
-
-    if (mints.length > 10) {
-      throw new ApiError(
-        "TOO_MANY_MINTS",
-        `Maximum 10 mints per request, got ${mints.length}`,
-      );
-    }
-
-    const response = await monitorTokens(mints);
-    res.json(response);
-  } catch (err) {
-    next(err);
-  }
-});
-
-// 10. MCP Streamable HTTP — stateless, free, rate-limited
+// 8. MCP Streamable HTTP — stateless, free, rate-limited
 const mcpRateLimiter = rateLimiter(config.liteRateLimitPerMinute);
 app.post("/mcp", mcpRateLimiter, express.json(), async (req, res) => {
   try {

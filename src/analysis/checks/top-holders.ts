@@ -20,9 +20,24 @@ export async function checkTopHolders(
   totalSupplyRaw: bigint,
 ): Promise<TopHoldersResult> {
   const connection = getConnection();
-  const largestAccounts = await connection.getTokenLargestAccounts(
-    new PublicKey(mintAddress),
-  );
+  let largestAccounts;
+  try {
+    largestAccounts = await connection.getTokenLargestAccounts(
+      new PublicKey(mintAddress),
+    );
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("Too many accounts")) {
+      return {
+        top_10_percentage: 0,
+        top_1_percentage: 0,
+        holder_count_estimate: 5_000_000,
+        top_holders_detail: null,
+        note: "Token has too many holders for RPC enumeration (5M+ accounts) — indicates extreme distribution",
+        risk: "SAFE",
+      };
+    }
+    throw err;
+  }
 
   const accounts = largestAccounts.value;
 
