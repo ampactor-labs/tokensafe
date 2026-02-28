@@ -104,17 +104,23 @@ describe("computeRiskScore", () => {
   });
 
   // --- Authority checks ---
-  it("adds 30 for active mint authority", () => {
+  it("adds 30 for active mint authority (no maturity signals)", () => {
     const result = computeRiskScore(
-      makeInput({ mint: makeMint({ mintAuthority: "SomeAuthority111" }) }),
+      makeInput({
+        mint: makeMint({ mintAuthority: "SomeAuthority111" }),
+        holders: makeHolders({ top_10_percentage: 0 }),
+      }),
     );
     expect(result.risk_score).toBe(30);
     expect(result.risk_level).toBe("MODERATE");
   });
 
-  it("adds 25 for active freeze authority", () => {
+  it("adds 25 for active freeze authority (no maturity signals)", () => {
     const result = computeRiskScore(
-      makeInput({ mint: makeMint({ freezeAuthority: "SomeAuthority111" }) }),
+      makeInput({
+        mint: makeMint({ freezeAuthority: "SomeAuthority111" }),
+        holders: makeHolders({ top_10_percentage: 0 }),
+      }),
     );
     expect(result.risk_score).toBe(25);
     expect(result.risk_level).toBe("MODERATE");
@@ -166,7 +172,9 @@ describe("computeRiskScore", () => {
 
   it("adds 0 for locked LP", () => {
     const result = computeRiskScore(
-      makeInput({ liquidity: makeLiquidity({ lp_locked: true, lp_lock_percentage: 95 }) }),
+      makeInput({
+        liquidity: makeLiquidity({ lp_locked: true, lp_lock_percentage: 95 }),
+      }),
     );
     expect(result.risk_score).toBe(0);
   });
@@ -298,9 +306,7 @@ describe("computeRiskScore", () => {
     const result = computeRiskScore(
       makeInput({
         mint: makeMint({
-          extensions: [
-            { name: "TransferHook", transfer_hook_program: null },
-          ],
+          extensions: [{ name: "TransferHook", transfer_hook_program: null }],
         }),
       }),
     );
@@ -367,23 +373,79 @@ describe("computeRiskScore", () => {
     const result = computeRiskScore(
       makeInput({
         mint: makeMint({ freezeAuthority: "A" }),
+        holders: makeHolders({ top_10_percentage: 0 }),
       }),
     );
-    // 25 (freeze authority)
+    // 25 (freeze authority, 0 maturity signals)
     expect(result.risk_score).toBe(25);
     expect(result.risk_level).toBe("MODERATE");
   });
 
-  // --- Freeze authority allowlist ---
+  // --- Authority allowlists ---
   it("skips freeze authority penalty for trusted authorities (e.g. Circle/USDC)", () => {
     const result = computeRiskScore(
       makeInput({
         mint: makeMint({
-          freezeAuthority: "7dGbd2QZcCKcTndnHcTL8q7SMVXAkp688JtsGMsNeDDw",
+          freezeAuthority: "7dGbd2QZcCKcTndnHcTL8q7SMVXAkp688NTQYwrRCrar",
         }),
       }),
     );
     expect(result.risk_score).toBe(0);
+  });
+
+  it("skips mint authority penalty for trusted authorities", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          mintAuthority: "BJE5MMbqXjVwjAF7oxwPYXnTXDyspzZyt4vwenNw5ruG",
+        }),
+      }),
+    );
+    expect(result.risk_score).toBe(0);
+  });
+
+  // --- Context-aware penalty reduction ---
+  it("reduces mint authority penalty for mature token (2+ signals)", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({ mintAuthority: "UnknownAuthority" }),
+        holders: makeHolders({ top_10_percentage: 15 }),
+        liquidity: makeLiquidity({ liquidity_rating: "DEEP" }),
+        tokenAge: makeAge({ token_age_hours: null, created_at: null }),
+      }),
+    );
+    // 3 maturity signals (deep liquidity, established, distributed) → +5
+    expect(result.risk_score).toBe(5);
+  });
+
+  it("reduces freeze authority penalty for mature token (2+ signals)", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({ freezeAuthority: "UnknownAuthority" }),
+        holders: makeHolders({ top_10_percentage: 15 }),
+        tokenAge: makeAge({ token_age_hours: null, created_at: null }),
+      }),
+    );
+    // 2 maturity signals (established, distributed) → +3
+    expect(result.risk_score).toBe(3);
+  });
+
+  it("USDC-like token scores LOW despite active authorities", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          mintAuthority: "BJE5MMbqXjVwjAF7oxwPYXnTXDyspzZyt4vwenNw5ruG",
+          freezeAuthority: "7dGbd2QZcCKcTndnHcTL8q7SMVXAkp688NTQYwrRCrar",
+        }),
+        holders: makeHolders({ top_10_percentage: 12 }),
+        liquidity: makeLiquidity({ liquidity_rating: "DEEP" }),
+        metadata: makeMetadata({ mutable: true }),
+        tokenAge: makeAge({ token_age_hours: null, created_at: null }),
+      }),
+    );
+    // Both authorities trusted → +0, mutable metadata → +10, age null → +0
+    expect(result.risk_score).toBe(10);
+    expect(result.risk_level).toBe("LOW");
   });
 });
 
@@ -416,7 +478,10 @@ describe("generateRiskSummary", () => {
   it("includes holder percentages", () => {
     const summary = generateRiskSummary(
       makeInput({
-        holders: makeHolders({ top_10_percentage: 75.3, top_1_percentage: 25.1 }),
+        holders: makeHolders({
+          top_10_percentage: 75.3,
+          top_1_percentage: 25.1,
+        }),
       }),
     );
     expect(summary).toContain("top 10 holders own 75.3% of supply");
@@ -483,7 +548,18 @@ describe("generateRiskSummary", () => {
     const summary = generateRiskSummary(
       makeInput({
         mint: makeMint({
-          freezeAuthority: "7dGbd2QZcCKcTndnHcTL8q7SMVXAkp688JtsGMsNeDDw",
+          freezeAuthority: "7dGbd2QZcCKcTndnHcTL8q7SMVXAkp688NTQYwrRCrar",
+        }),
+      }),
+    );
+    expect(summary).toBe("No risk factors detected");
+  });
+
+  it("skips mint authority flag for trusted authorities", () => {
+    const summary = generateRiskSummary(
+      makeInput({
+        mint: makeMint({
+          mintAuthority: "BJE5MMbqXjVwjAF7oxwPYXnTXDyspzZyt4vwenNw5ruG",
         }),
       }),
     );

@@ -22,26 +22,65 @@ export interface RiskScoreResult {
 }
 
 /**
+ * Known mint authorities that are NOT rug-risk indicators.
+ * e.g. Circle maintains mint authority on USDC for CCTP minting.
+ */
+const TRUSTED_MINT_AUTHORITIES = new Set([
+  // Circle USDC mint authority — verified from mainnet getAccountInfo
+  "BJE5MMbqXjVwjAF7oxwPYXnTXDyspzZyt4vwenNw5ruG",
+]);
+
+/**
  * Known freeze authorities that are NOT rug-risk indicators.
  * e.g. Circle uses freeze authority on USDC for regulatory compliance.
- * Key: freeze authority pubkey, value: reason it's trusted.
  */
 const TRUSTED_FREEZE_AUTHORITIES = new Set([
-  // Circle (USDC issuer) — both mainnet and devnet USDC have active freeze authority
-  "7dGbd2QZcCKcTndnHcTL8q7SMVXAkp688JtsGMsNeDDw",
-  // Add more as identified (e.g. other stablecoin issuers)
+  // Circle USDC freeze authority — verified from mainnet getAccountInfo
+  "7dGbd2QZcCKcTndnHcTL8q7SMVXAkp688NTQYwrRCrar",
 ]);
 
 export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
   let score = 0;
 
-  // Mint/freeze authority
-  if (input.mint.mintAuthority !== null) score += 30;
+  // Maturity signals reduce authority penalties for institutional tokens
+  const hasDeepLiquidity =
+    input.liquidity?.liquidity_rating === "DEEP" ||
+    (input.liquidity?.price_impact_pct != null &&
+      input.liquidity.price_impact_pct < 1.0);
+  const isEstablished =
+    input.tokenAge === null || input.tokenAge.token_age_hours === null;
+  const isDistributed =
+    input.holders.top_10_percentage > 0 && input.holders.top_10_percentage < 30;
+  const maturitySignals =
+    (hasDeepLiquidity ? 1 : 0) +
+    (isEstablished ? 1 : 0) +
+    (isDistributed ? 1 : 0);
+
+  // Mint authority
+  if (input.mint.mintAuthority !== null) {
+    if (TRUSTED_MINT_AUTHORITIES.has(input.mint.mintAuthority)) {
+      // No penalty for known trusted authorities
+    } else if (maturitySignals >= 2) {
+      score += 5;
+    } else if (maturitySignals === 1) {
+      score += 15;
+    } else {
+      score += 30;
+    }
+  }
+
+  // Freeze authority
   if (
     input.mint.freezeAuthority !== null &&
     !TRUSTED_FREEZE_AUTHORITIES.has(input.mint.freezeAuthority)
   ) {
-    score += 25;
+    if (maturitySignals >= 2) {
+      score += 3;
+    } else if (maturitySignals === 1) {
+      score += 12;
+    } else {
+      score += 25;
+    }
   }
 
   // Top holder concentration
@@ -100,7 +139,12 @@ export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
 export function generateRiskSummary(input: RiskScoreInput): string {
   const flags: string[] = [];
 
-  if (input.mint.mintAuthority !== null) flags.push("active mint authority");
+  if (
+    input.mint.mintAuthority !== null &&
+    !TRUSTED_MINT_AUTHORITIES.has(input.mint.mintAuthority)
+  ) {
+    flags.push("active mint authority");
+  }
   if (
     input.mint.freezeAuthority !== null &&
     !TRUSTED_FREEZE_AUTHORITIES.has(input.mint.freezeAuthority)
@@ -108,34 +152,45 @@ export function generateRiskSummary(input: RiskScoreInput): string {
     flags.push("active freeze authority");
   }
   if (input.holders.top_10_percentage > 50)
-    flags.push(`top 10 holders own ${input.holders.top_10_percentage.toFixed(1)}% of supply`);
+    flags.push(
+      `top 10 holders own ${input.holders.top_10_percentage.toFixed(1)}% of supply`,
+    );
   if (input.holders.top_1_percentage > 20)
     flags.push(`top holder owns ${input.holders.top_1_percentage.toFixed(1)}%`);
   if (input.liquidity && !input.liquidity.has_liquidity)
     flags.push("no liquidity detected");
-  else if (input.liquidity?.has_liquidity && input.liquidity.lp_locked === false)
+  else if (
+    input.liquidity?.has_liquidity &&
+    input.liquidity.lp_locked === false
+  )
     flags.push("LP not locked");
   if (input.metadata?.mutable) flags.push("mutable metadata");
-  if (input.tokenAge?.token_age_hours != null && input.tokenAge.token_age_hours < 1)
+  if (
+    input.tokenAge?.token_age_hours != null &&
+    input.tokenAge.token_age_hours < 1
+  )
     flags.push("token < 1 hour old");
-  else if (input.tokenAge?.token_age_hours != null && input.tokenAge.token_age_hours < 24)
+  else if (
+    input.tokenAge?.token_age_hours != null &&
+    input.tokenAge.token_age_hours < 24
+  )
     flags.push("token < 24 hours old");
   for (const ext of input.mint.extensions) {
     if (ext.name === "PermanentDelegate" && ext.permanent_delegate)
       flags.push("permanent delegate set");
-    if (ext.name === "TransferFeeConfig" && ext.transfer_fee_bps != null && ext.transfer_fee_bps > 0)
+    if (
+      ext.name === "TransferFeeConfig" &&
+      ext.transfer_fee_bps != null &&
+      ext.transfer_fee_bps > 0
+    )
       flags.push(`${(ext.transfer_fee_bps / 100).toFixed(1)}% transfer fee`);
     if (ext.name === "TransferHook" && ext.transfer_hook_program)
       flags.push("transfer hook set — arbitrary code runs on every transfer");
   }
-  if (input.honeypot && !input.honeypot.can_sell) flags.push("cannot sell (honeypot)");
-  if (
-    input.honeypot?.sell_tax_bps != null &&
-    input.honeypot.sell_tax_bps > 0
-  ) {
-    flags.push(
-      `${(input.honeypot.sell_tax_bps / 100).toFixed(1)}% sell tax`,
-    );
+  if (input.honeypot && !input.honeypot.can_sell)
+    flags.push("cannot sell (honeypot)");
+  if (input.honeypot?.sell_tax_bps != null && input.honeypot.sell_tax_bps > 0) {
+    flags.push(`${(input.honeypot.sell_tax_bps / 100).toFixed(1)}% sell tax`);
   }
 
   if (flags.length === 0) return "No risk factors detected";

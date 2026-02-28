@@ -485,6 +485,16 @@ describe("checkTokenAge", () => {
     expect(result.created_at).not.toBeNull();
   });
 
+  it("returns null age for established token (1000 sigs)", async () => {
+    const sigs = Array.from({ length: 1000 }, (_, i) => ({
+      blockTime: Math.floor(Date.now() / 1000) - i * 60,
+    }));
+    conn.getSignaturesForAddress.mockResolvedValue(sigs);
+    const result = await checkTokenAge(MINT);
+    expect(result.token_age_hours).toBeNull();
+    expect(result.created_at).toBeNull();
+  });
+
   it("returns null age when RPC throws", async () => {
     conn.getSignaturesForAddress.mockRejectedValue(new Error("timeout"));
     const result = await checkTokenAge(MINT);

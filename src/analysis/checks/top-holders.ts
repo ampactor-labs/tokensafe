@@ -30,16 +30,17 @@ export async function checkTopHolders(
     };
   }
 
-  // Scaled BigInt arithmetic: compute basis points (0-10000) then convert to percentage
+  // Scaled BigInt arithmetic: scale by 1M for 0.01% precision, then convert to percentage
+  const SCALE = 1_000_000n;
   const top10 = accounts.slice(0, 10);
-  const top10Bps = top10.reduce(
-    (sum, a) => sum + (BigInt(a.amount) * 10000n) / totalSupplyRaw,
+  const top10Scaled = top10.reduce(
+    (sum, a) => sum + (BigInt(a.amount) * SCALE) / totalSupplyRaw,
     0n,
   );
-  const top1Bps = (BigInt(accounts[0].amount) * 10000n) / totalSupplyRaw;
+  const top1Scaled = (BigInt(accounts[0].amount) * SCALE) / totalSupplyRaw;
 
-  const top10Pct = Math.round(Number(top10Bps)) / 100;
-  const top1Pct = Math.round(Number(top1Bps)) / 100;
+  const top10Pct = Math.round(Number(top10Scaled)) / 10_000;
+  const top1Pct = Math.round(Number(top1Scaled)) / 10_000;
 
   // If fewer than 20 accounts returned, that's the actual holder count
   const holderCountEstimate = accounts.length < 20 ? accounts.length : null;

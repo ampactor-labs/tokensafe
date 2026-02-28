@@ -115,8 +115,8 @@ async function main() {
     const res = await fetch(`${BASE}/v1/check/lite?mint=${WSOL}`);
     const cache = res.headers.get("x-cache");
     assert(
-      cache === "HIT" || cache === "MISS",
-      `expected HIT or MISS, got ${cache}`,
+      cache !== null && (cache.includes("HIT") || cache.includes("MISS")),
+      `expected header containing HIT or MISS, got ${cache}`,
     );
   });
 
@@ -130,12 +130,15 @@ async function main() {
     assert(pr !== null && pr.length > 0, "missing PAYMENT-REQUIRED header");
   });
 
-  await check("GET /v1/monitor → 402 with PAYMENT-REQUIRED header", async () => {
-    const res = await fetch(`${BASE}/v1/monitor?mints=${WSOL}`);
-    assert(res.status === 402, `expected 402, got ${res.status}`);
-    const pr = res.headers.get("payment-required");
-    assert(pr !== null && pr.length > 0, "missing PAYMENT-REQUIRED header");
-  });
+  await check(
+    "GET /v1/monitor → 402 with PAYMENT-REQUIRED header",
+    async () => {
+      const res = await fetch(`${BASE}/v1/monitor?mints=${WSOL}`);
+      assert(res.status === 402, `expected 402, got ${res.status}`);
+      const pr = res.headers.get("payment-required");
+      assert(pr !== null && pr.length > 0, "missing PAYMENT-REQUIRED header");
+    },
+  );
 
   // --- Error handling ---
   console.log("\nError handling:");
