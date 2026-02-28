@@ -51,6 +51,13 @@ export async function checkMintAccount(
 
   const ownerStr = accountInfo.owner.toBase58();
   const isToken2022 = ownerStr === TOKEN_2022_PROGRAM.toBase58();
+  const isSplToken = ownerStr === SPL_TOKEN_PROGRAM.toBase58();
+  if (!isToken2022 && !isSplToken) {
+    throw new ApiError(
+      "TOKEN_NOT_FOUND",
+      `Account ${mintAddress} exists but is not a token mint (owner: ${ownerStr})`,
+    );
+  }
   const programId = isToken2022 ? TOKEN_2022_PROGRAM : SPL_TOKEN_PROGRAM;
 
   const mint = await getMint(connection, mintPubkey, "confirmed", programId);

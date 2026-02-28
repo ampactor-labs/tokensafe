@@ -223,6 +223,123 @@ async function main() {
     );
   });
 
+  // --- MCP endpoint ---
+  console.log("\nMCP endpoint:");
+
+  const mcpHeaders = {
+    "Content-Type": "application/json",
+    Accept: "application/json, text/event-stream",
+  };
+
+  await check("MCP tools/list includes preview, not check", async () => {
+    const res = await fetch(`${BASE}/mcp`, {
+      method: "POST",
+      headers: mcpHeaders,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+      }),
+    });
+    assert(res.status === 200, `expected 200, got ${res.status}`);
+    const text = await res.text();
+    const data = text.split("\n").find((l) => l.startsWith("data: "));
+    assert(data !== undefined, "no SSE data line in response");
+    const parsed = JSON.parse(data!.replace("data: ", ""));
+    const names = parsed.result.tools.map((t: { name: string }) => t.name);
+    assert(
+      names.includes("solana_token_safety_preview"),
+      `missing solana_token_safety_preview, got: ${names.join(", ")}`,
+    );
+    assert(
+      names.includes("solana_token_safety_lite"),
+      `missing solana_token_safety_lite, got: ${names.join(", ")}`,
+    );
+    assert(
+      !names.includes("solana_token_safety_check"),
+      "old tool name solana_token_safety_check still present",
+    );
+  });
+
+  await check(
+    "MCP preview tool returns lite data with absolute URL",
+    async () => {
+      const res = await fetch(`${BASE}/mcp`, {
+        method: "POST",
+        headers: mcpHeaders,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: {
+            name: "solana_token_safety_preview",
+            arguments: { mint_address: WSOL },
+          },
+        }),
+      });
+      const text = await res.text();
+      const data = text.split("\n").find((l) => l.startsWith("data: "));
+      assert(data !== undefined, "no SSE data line");
+      const parsed = JSON.parse(data!.replace("data: ", ""));
+      const result = JSON.parse(parsed.result.content[0].text);
+      assert(result.mint === WSOL, `wrong mint: ${result.mint}`);
+      assert(typeof result.risk_score === "number", "missing risk_score");
+      assert(!result.checks, "MCP leaks full checks");
+      assert(!result.changes, "MCP leaks changes");
+      // full_report URL must be absolute (not relative)
+      assert(
+        result.full_report.url.startsWith("http"),
+        `full_report.url must be absolute, got: ${result.full_report.url}`,
+      );
+    },
+  );
+
+  await check("MCP invalid base58 → graceful isError, not 502", async () => {
+    const res = await fetch(`${BASE}/mcp`, {
+      method: "POST",
+      headers: mcpHeaders,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "solana_token_safety_lite",
+          arguments: { mint_address: "not-a-valid-mint" },
+        },
+      }),
+    });
+    assert(
+      res.status === 200,
+      `expected 200 (MCP error in body), got ${res.status}`,
+    );
+    const text = await res.text();
+    const data = text.split("\n").find((l) => l.startsWith("data: "));
+    assert(data !== undefined, "no SSE data line");
+    const parsed = JSON.parse(data!.replace("data: ", ""));
+    assert(
+      parsed.result.isError === true,
+      "expected isError: true for invalid mint",
+    );
+  });
+
+  // --- Non-mint address handling ---
+  console.log("\nNon-mint address:");
+
+  // Token program ID is a valid base58 address but not a token mint
+  const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+  await check("Non-mint account → 404 TOKEN_NOT_FOUND (not 503)", async () => {
+    const res = await fetch(`${BASE}/v1/check/lite?mint=${TOKEN_PROGRAM}`);
+    assert(
+      res.status === 404,
+      `expected 404 for non-mint account, got ${res.status}`,
+    );
+    const body = await res.json();
+    assert(
+      body.error?.code === "TOKEN_NOT_FOUND",
+      `expected TOKEN_NOT_FOUND, got ${body.error?.code}`,
+    );
+  });
+
   // --- Error handling ---
   console.log("\nError handling:");
 

@@ -11,7 +11,33 @@ function validateMint(address: string): void {
   }
 }
 
-export function createMcpServer(): McpServer {
+async function handleToolCall(
+  mintAddress: string,
+  baseUrl: string,
+): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+  try {
+    validateMint(mintAddress);
+    const { result } = await checkTokenLite(mintAddress, baseUrl);
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(result) }],
+    };
+  } catch (err) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            error: (err as Error).message || "Unknown error",
+          }),
+        },
+      ],
+      // @ts-expect-error -- MCP SDK accepts isError on tool results
+      isError: true,
+    };
+  }
+}
+
+export function createMcpServer(baseUrl: string = ""): McpServer {
   const server = new McpServer({ name: "tokensafe", version: "1.0.0" });
 
   server.registerTool(
@@ -25,17 +51,11 @@ export function createMcpServer(): McpServer {
           .describe("Solana token mint address in base58 format"),
       },
     },
-    async ({ mint_address }) => {
-      validateMint(mint_address);
-      const { result } = await checkTokenLite(mint_address);
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(result) }],
-      };
-    },
+    async ({ mint_address }) => handleToolCall(mint_address, baseUrl),
   );
 
   server.registerTool(
-    "solana_token_safety_check",
+    "solana_token_safety_preview",
     {
       description:
         "Preview safety analysis for any Solana SPL token. Returns risk score (0-100), risk level, and summary. Full report with authority addresses, holder breakdown, LP lock status, honeypot details, and change detection requires x402 payment ($0.008 USDC) via the REST API at GET /v1/check?mint=<address>.",
@@ -45,13 +65,7 @@ export function createMcpServer(): McpServer {
           .describe("Solana token mint address in base58 format"),
       },
     },
-    async ({ mint_address }) => {
-      validateMint(mint_address);
-      const { result } = await checkTokenLite(mint_address);
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(result) }],
-      };
-    },
+    async ({ mint_address }) => handleToolCall(mint_address, baseUrl),
   );
 
   return server;

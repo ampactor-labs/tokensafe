@@ -187,7 +187,7 @@ MCP endpoint for tool discovery by AI agents (Claude Desktop, Cursor, Windsurf).
 | Tool | Description |
 |------|-------------|
 | `solana_token_safety_lite` | Free quick screening — same as `/v1/check/lite` |
-| `solana_token_safety_check` | Preview analysis — returns lite data with upgrade CTA for full report via x402 REST API |
+| `solana_token_safety_preview` | Preview analysis — returns lite data with upgrade CTA for full report via x402 REST API |
 
 ### `GET /.well-known/x402` — Discovery Document (Free)
 
