@@ -5,6 +5,9 @@ export type ErrorCode =
   | "RPC_ERROR"
   | "RATE_LIMITED"
   | "TOO_MANY_MINTS"
+  | "UNAUTHORIZED"
+  | "WEBHOOK_NOT_FOUND"
+  | "WEBHOOK_LIMIT_EXCEEDED"
   | "INTERNAL_ERROR";
 
 const STATUS_MAP: Record<ErrorCode, number> = {
@@ -14,6 +17,9 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   RPC_ERROR: 503,
   RATE_LIMITED: 429,
   TOO_MANY_MINTS: 400,
+  UNAUTHORIZED: 401,
+  WEBHOOK_NOT_FOUND: 404,
+  WEBHOOK_LIMIT_EXCEEDED: 400,
   INTERNAL_ERROR: 500,
 };
 

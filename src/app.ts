@@ -7,6 +7,12 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { config } from "./config.js";
 import { logger } from "./utils/logger.js";
 import { ApiError } from "./utils/errors.js";
+import {
+  createSubscription,
+  listSubscriptions,
+  updateSubscription,
+  deleteSubscription,
+} from "./utils/db.js";
 import { x402Middleware } from "./x402/middleware.js";
 import { checkToken, checkTokenLite } from "./analysis/token-checker.js";
 import { cacheStats } from "./utils/cache.js";
@@ -110,6 +116,7 @@ app.get("/.well-known/x402", (_req, res) => {
       "| `POST /v1/check/batch/small` | $0.025 (up to 5) | Batch safety check |",
       "| `POST /v1/check/batch/medium` | $0.08 (up to 20) | Batch safety check |",
       "| `POST /v1/check/batch/large` | $0.15 (up to 50) | Batch safety check |",
+      "| `POST /v1/webhooks` | Bearer auth | Webhook subscription management (CRUD) |",
       "| `GET /health` | Free | Server status |",
       "",
       "## Rate Limits",
@@ -151,6 +158,7 @@ app.get("/health", healthRateLimiter, (_req, res) => {
           "/v1/check/batch/small",
           "/v1/check/batch/medium",
           "/v1/check/batch/large",
+          "/v1/webhooks",
         ],
       },
     },
@@ -249,6 +257,251 @@ app.get("/v1/decide", liteRateLimiter, async (req, res, next) => {
     next(err);
   }
 });
+
+// 4c. Webhook CRUD — bearer-gated, before x402 paywall
+
+function webhookAuth(
+  req: express.Request,
+  _res: express.Response,
+  next: express.NextFunction,
+) {
+  if (!config.webhookAdminBearer) {
+    throw new ApiError("UNAUTHORIZED", "Webhook admin not configured");
+  }
+  const hdr = req.headers.authorization;
+  if (!hdr || hdr !== `Bearer ${config.webhookAdminBearer}`) {
+    throw new ApiError("UNAUTHORIZED", "Invalid or missing bearer");
+  }
+  next();
+}
+
+function generateHmacKey(): string {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+function redactHmac(full: string): string {
+  return "***" + full.slice(-8);
+}
+
+const webhookJsonParser = express.json();
+
+app.post(
+  "/v1/webhooks",
+  webhookAuth,
+  webhookJsonParser,
+  (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    try {
+      const { callback_url, mints, threshold } = req.body as {
+        callback_url?: unknown;
+        mints?: unknown;
+        threshold?: unknown;
+      };
+
+      if (typeof callback_url !== "string" || !callback_url) {
+        throw new ApiError(
+          "MISSING_REQUIRED_PARAM",
+          "callback_url is required and must be a non-empty string",
+        );
+      }
+
+      if (!Array.isArray(mints) || mints.length === 0) {
+        throw new ApiError(
+          "MISSING_REQUIRED_PARAM",
+          "mints is required and must be a non-empty array of strings",
+        );
+      }
+
+      for (const mint of mints) {
+        if (typeof mint !== "string") {
+          throw new ApiError(
+            "INVALID_MINT_ADDRESS",
+            `Invalid mint address: expected string, got ${typeof mint}`,
+          );
+        }
+        try {
+          new PublicKey(mint);
+        } catch {
+          throw new ApiError(
+            "INVALID_MINT_ADDRESS",
+            `Invalid Solana mint address: ${mint}`,
+          );
+        }
+      }
+
+      const thresholdNum = threshold !== undefined ? Number(threshold) : 50;
+      if (
+        !Number.isFinite(thresholdNum) ||
+        thresholdNum < 0 ||
+        thresholdNum > 100
+      ) {
+        throw new ApiError(
+          "MISSING_REQUIRED_PARAM",
+          "threshold must be a number between 0 and 100",
+        );
+      }
+
+      // Enforce per-token subscription limit
+      const existing = listSubscriptions();
+      for (const mint of mints as string[]) {
+        const countForMint = existing.filter(
+          (s) => s.active && s.mints.includes(mint),
+        ).length;
+        if (countForMint >= config.maxWebhooksPerToken) {
+          throw new ApiError(
+            "WEBHOOK_LIMIT_EXCEEDED",
+            `Mint ${mint} already has ${countForMint} active subscriptions (max ${config.maxWebhooksPerToken})`,
+          );
+        }
+      }
+
+      const sub = createSubscription(
+        callback_url,
+        mints as string[],
+        thresholdNum,
+        generateHmacKey(),
+      );
+
+      // Full hmac shown only on creation
+      res.status(201).json(sub);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+app.get(
+  "/v1/webhooks",
+  webhookAuth,
+  (
+    _req: express.Request,
+    res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    try {
+      const subs = listSubscriptions().map((s) => ({
+        ...s,
+        secret_hmac: redactHmac(s.secret_hmac),
+      }));
+      res.json(subs);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+app.patch(
+  "/v1/webhooks/:id",
+  webhookAuth,
+  webhookJsonParser,
+  (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    try {
+      const rawId = Array.isArray(req.params.id)
+        ? req.params.id[0]
+        : req.params.id;
+      const id = parseInt(rawId, 10);
+      if (!Number.isFinite(id)) {
+        throw new ApiError("WEBHOOK_NOT_FOUND", "Invalid subscription ID");
+      }
+
+      const { callback_url, mints, threshold, active } = req.body as {
+        callback_url?: unknown;
+        mints?: unknown;
+        threshold?: unknown;
+        active?: unknown;
+      };
+
+      const updates: Parameters<typeof updateSubscription>[1] = {};
+
+      if (callback_url !== undefined) {
+        if (typeof callback_url !== "string" || !callback_url) {
+          throw new ApiError(
+            "MISSING_REQUIRED_PARAM",
+            "callback_url must be a non-empty string",
+          );
+        }
+        updates.callback_url = callback_url;
+      }
+
+      if (mints !== undefined) {
+        if (!Array.isArray(mints) || mints.length === 0) {
+          throw new ApiError(
+            "MISSING_REQUIRED_PARAM",
+            "mints must be a non-empty array of strings",
+          );
+        }
+        for (const mint of mints) {
+          if (typeof mint !== "string") {
+            throw new ApiError(
+              "INVALID_MINT_ADDRESS",
+              `Invalid mint address: expected string, got ${typeof mint}`,
+            );
+          }
+          try {
+            new PublicKey(mint);
+          } catch {
+            throw new ApiError(
+              "INVALID_MINT_ADDRESS",
+              `Invalid Solana mint address: ${mint}`,
+            );
+          }
+        }
+        updates.mints = mints as string[];
+      }
+
+      if (threshold !== undefined) {
+        const t = Number(threshold);
+        if (!Number.isFinite(t) || t < 0 || t > 100) {
+          throw new ApiError(
+            "MISSING_REQUIRED_PARAM",
+            "threshold must be a number between 0 and 100",
+          );
+        }
+        updates.threshold = t;
+      }
+
+      if (active !== undefined) {
+        updates.active = Boolean(active);
+      }
+
+      const sub = updateSubscription(id, updates);
+      if (!sub) {
+        throw new ApiError("WEBHOOK_NOT_FOUND", `Subscription ${id} not found`);
+      }
+
+      res.json({
+        ...sub,
+        secret_hmac: redactHmac(sub.secret_hmac),
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+app.delete(
+  "/v1/webhooks/:id",
+  webhookAuth,
+  (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    try {
+      const rawId = Array.isArray(req.params.id)
+        ? req.params.id[0]
+        : req.params.id;
+      const id = parseInt(rawId, 10);
+      if (!Number.isFinite(id)) {
+        throw new ApiError("WEBHOOK_NOT_FOUND", "Invalid subscription ID");
+      }
+
+      const deleted = deleteSubscription(id);
+      if (!deleted) {
+        throw new ApiError("WEBHOOK_NOT_FOUND", `Subscription ${id} not found`);
+      }
+
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // 5. x402 payment gate for paid routes
 app.use(x402Middleware);
