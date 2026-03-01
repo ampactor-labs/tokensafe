@@ -21,6 +21,7 @@ export interface RiskScoreInput {
 export interface RiskScoreResult {
   risk_score: number;
   risk_level: RiskLevel;
+  breakdown: Record<string, number>;
 }
 
 /**
@@ -72,6 +73,12 @@ export function getMaturitySignals(input: RiskScoreInput): number {
 
 export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
   let score = 0;
+  const breakdown: Record<string, number> = {};
+
+  function add(key: string, pts: number) {
+    score += pts;
+    breakdown[key] = (breakdown[key] ?? 0) + pts;
+  }
 
   // Maturity signals reduce authority penalties for institutional tokens
   // Established = token has 100+ transactions (set by token-age check).
@@ -83,11 +90,11 @@ export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
     if (TRUSTED_MINT_AUTHORITIES.has(input.mint.mintAuthority)) {
       // No penalty for known trusted authorities
     } else if (maturitySignals >= 2) {
-      score += 5;
+      add("mint_authority", 5);
     } else if (maturitySignals === 1) {
-      score += 15;
+      add("mint_authority", 15);
     } else {
-      score += 30;
+      add("mint_authority", 30);
     }
   }
 
@@ -97,28 +104,29 @@ export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
     !TRUSTED_FREEZE_AUTHORITIES.has(input.mint.freezeAuthority)
   ) {
     if (maturitySignals >= 2) {
-      score += 3;
+      add("freeze_authority", 3);
     } else if (maturitySignals === 1) {
-      score += 12;
+      add("freeze_authority", 12);
     } else {
-      score += 25;
+      add("freeze_authority", 25);
     }
   }
 
   // Top holder concentration
-  if (input.holders.top_10_percentage > 50) score += 15;
+  if (input.holders.top_10_percentage > 50) add("top_holders", 15);
   // Skip single-whale penalty if token has active liquidity — top holder is likely the AMM vault
   const hasActiveLiquidity = input.liquidity?.has_liquidity === true;
-  if (input.holders.top_1_percentage > 20 && !hasActiveLiquidity) score += 10;
+  if (input.holders.top_1_percentage > 20 && !hasActiveLiquidity)
+    add("top_holders", 10);
 
   // Liquidity
   if (input.liquidity) {
-    if (!input.liquidity.has_liquidity) score += 30;
-    else if (input.liquidity.lp_locked === false) score += 15;
+    if (!input.liquidity.has_liquidity) add("liquidity", 30);
+    else if (input.liquidity.lp_locked === false) add("liquidity", 15);
   }
 
   // Metadata mutability (context-aware: established tokens need mutable metadata)
-  if (input.metadata?.mutable) score += maturitySignals >= 2 ? 5 : 10;
+  if (input.metadata?.mutable) add("metadata", maturitySignals >= 2 ? 5 : 10);
 
   // Token age — skip established tokens (100+ txs = clearly not new)
   if (
@@ -127,41 +135,41 @@ export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
     !input.tokenAge.established
   ) {
     const ageHours = input.tokenAge.token_age_hours!;
-    if (ageHours < 1) score += 10;
-    else if (ageHours < 24) score += 5;
+    if (ageHours < 1) add("token_age", 10);
+    else if (ageHours < 24) add("token_age", 5);
   }
 
   // Token-2022 extension risks
   for (const ext of input.mint.extensions) {
     if (ext.name === "PermanentDelegate" && ext.permanent_delegate) {
-      score += 30;
+      add("permanent_delegate", 30);
     }
     if (ext.name === "TransferFeeConfig" && ext.transfer_fee_bps != null) {
-      if (ext.transfer_fee_bps > 5000) score += 20;
-      else if (ext.transfer_fee_bps >= 1000) score += 10;
-      else if (ext.transfer_fee_bps > 0) score += 5;
+      if (ext.transfer_fee_bps > 5000) add("transfer_fee", 20);
+      else if (ext.transfer_fee_bps >= 1000) add("transfer_fee", 10);
+      else if (ext.transfer_fee_bps > 0) add("transfer_fee", 5);
     }
     if (ext.name === "TransferHook" && ext.transfer_hook_program) {
-      score += 15; // Arbitrary code runs on every transfer
+      add("transfer_hook", 15);
     }
   }
 
   // Honeypot
   if (input.honeypot) {
     if (input.honeypot.can_sell === false) {
-      score += 30; // Confirmed honeypot — buy exists, sell does not
+      add("honeypot", 30);
     } else if (input.honeypot.can_sell === null) {
-      score += 10; // No Jupiter route — unknown, flag uncertainty
+      add("honeypot", 10);
     }
     if (input.honeypot.sell_tax_bps != null) {
-      if (input.honeypot.sell_tax_bps > 1000) score += 15;
-      else if (input.honeypot.sell_tax_bps > 0) score += 5;
+      if (input.honeypot.sell_tax_bps > 1000) add("sell_tax", 15);
+      else if (input.honeypot.sell_tax_bps > 0) add("sell_tax", 5);
     }
   }
 
   score = Math.min(score, 100);
   const risk_level = scoreToLevel(score);
-  return { risk_score: score, risk_level };
+  return { risk_score: score, risk_level, breakdown };
 }
 
 export function getRiskFactors(input: RiskScoreInput): string[] {

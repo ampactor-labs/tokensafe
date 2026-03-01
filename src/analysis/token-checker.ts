@@ -94,6 +94,7 @@ export interface TokenCheckResult {
   degraded_checks: string[];
   response_signature: string;
   signer_pubkey: string;
+  score_breakdown: Record<string, number>;
   changes: ChangeReport | null;
   alerts: MonitorAlert[];
 }
@@ -115,6 +116,13 @@ export interface TokenCheckLiteResult {
   degraded: boolean;
   is_token_2022: boolean;
   has_risky_extensions: boolean;
+  can_sell: boolean | null;
+  authorities_renounced: boolean;
+  has_liquidity: boolean;
+  token_age_hours: number | null;
+  risk_score_delta: number | null;
+  previous_risk_score: number | null;
+  previous_risk_level: string | null;
   full_report: FullReportCTA;
 }
 
@@ -210,6 +218,15 @@ export async function checkTokenLite(
       degraded: result.degraded,
       is_token_2022: result.checks.is_token_2022,
       has_risky_extensions: hasRisky,
+      can_sell: result.checks.honeypot?.can_sell ?? null,
+      authorities_renounced:
+        result.checks.mint_authority.status === "RENOUNCED" &&
+        result.checks.freeze_authority.status === "RENOUNCED",
+      has_liquidity: result.checks.liquidity?.has_liquidity ?? false,
+      token_age_hours: result.checks.token_age_hours ?? null,
+      risk_score_delta: result.changes?.risk_score_delta ?? null,
+      previous_risk_score: result.changes?.previous_risk_score ?? null,
+      previous_risk_level: result.changes?.previous_risk_level ?? null,
       full_report: {
         url: `${baseUrl || ""}/v1/check?mint=${mintAddress}`,
         price_usd: "$0.008",
@@ -336,7 +353,7 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
     tokenAge,
     honeypot,
   };
-  const { risk_score, risk_level } = computeRiskScore(riskInput);
+  const { risk_score, risk_level, breakdown } = computeRiskScore(riskInput);
   const risk_factors = getRiskFactors(riskInput);
   const summary = generateRiskSummary(riskInput);
 
@@ -400,6 +417,7 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
     summary,
     degraded,
     degraded_checks: degradedChecks,
+    score_breakdown: breakdown,
     response_signature: signResponse({
       mint: mintAddress,
       checked_at,

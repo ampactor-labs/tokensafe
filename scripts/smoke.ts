@@ -175,6 +175,7 @@ async function main() {
       assert(body.risk_factors === undefined, "lite leaks risk_factors");
       assert(body.checked_at === undefined, "lite leaks checked_at");
       assert(body.degraded_checks === undefined, "lite leaks degraded_checks");
+      assert(body.score_breakdown === undefined, "lite leaks score_breakdown");
     },
   );
 
@@ -217,6 +218,17 @@ async function main() {
       );
     },
   );
+
+  await check("POST /v1/check/batch/small → 402 with x402 gate", async () => {
+    const res = await fetch(`${BASE}/v1/check/batch/small`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mints: [WSOL] }),
+    });
+    assert(res.status === 402, `expected 402, got ${res.status}`);
+    const pr = res.headers.get("payment-required");
+    assert(pr !== null && pr.length > 0, "missing PAYMENT-REQUIRED header");
+  });
 
   // --- Discovery ---
   console.log("\nDiscovery:");
@@ -327,6 +339,82 @@ async function main() {
     assert(
       parsed.result.isError === true,
       "expected isError: true for invalid mint",
+    );
+  });
+
+  // --- USDT (regression — was 404 due to transient RPC cache) ---
+  const USDT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+  await check("GET /v1/check/lite USDT → 200 LOW risk", async () => {
+    const res = await fetch(`${BASE}/v1/check/lite?mint=${USDT}`);
+    assert(res.status === 200, `expected 200, got ${res.status}`);
+    const body = await res.json();
+    assert(body.risk_level === "LOW", `expected LOW, got ${body.risk_level}`);
+  });
+
+  // --- Lite enrichment fields ---
+  console.log("\nLite enrichment:");
+
+  await check(
+    "Lite includes can_sell, authorities_renounced, has_liquidity, token_age_hours",
+    async () => {
+      const res = await fetch(`${BASE}/v1/check/lite?mint=${WSOL}`);
+      const body = await res.json();
+      assert(
+        typeof body.can_sell === "boolean" || body.can_sell === null,
+        `can_sell: expected boolean|null, got ${typeof body.can_sell}`,
+      );
+      assert(
+        typeof body.authorities_renounced === "boolean",
+        `authorities_renounced: expected boolean, got ${typeof body.authorities_renounced}`,
+      );
+      assert(
+        typeof body.has_liquidity === "boolean",
+        `has_liquidity: expected boolean, got ${typeof body.has_liquidity}`,
+      );
+      assert(
+        typeof body.token_age_hours === "number" ||
+          body.token_age_hours === null,
+        `token_age_hours: expected number|null, got ${typeof body.token_age_hours}`,
+      );
+    },
+  );
+
+  // --- Decide endpoint ---
+  console.log("\nDecide endpoint:");
+
+  await check("GET /v1/decide wSOL → SAFE with default threshold", async () => {
+    const res = await fetch(`${BASE}/v1/decide?mint=${WSOL}`);
+    assert(res.status === 200, `expected 200, got ${res.status}`);
+    const body = await res.json();
+    assert(body.mint === WSOL, `expected mint=${WSOL}`);
+    assert(
+      body.decision === "SAFE" ||
+        body.decision === "RISKY" ||
+        body.decision === "UNKNOWN",
+      `bad decision: ${body.decision}`,
+    );
+    assert(typeof body.risk_score === "number", "missing risk_score");
+    assert(typeof body.threshold_used === "number", "missing threshold_used");
+    assert(typeof body.full_report === "object", "missing full_report");
+  });
+
+  await check("GET /v1/decide with custom threshold", async () => {
+    const res = await fetch(`${BASE}/v1/decide?mint=${WSOL}&threshold=0`);
+    assert(res.status === 200, `expected 200, got ${res.status}`);
+    const body = await res.json();
+    assert(
+      body.threshold_used === 0,
+      `expected threshold_used=0, got ${body.threshold_used}`,
+    );
+  });
+
+  await check("GET /v1/decide without mint → 400", async () => {
+    const res = await fetch(`${BASE}/v1/decide`);
+    assert(res.status === 400, `expected 400, got ${res.status}`);
+    const body = await res.json();
+    assert(
+      body.error?.code === "MISSING_REQUIRED_PARAM",
+      `expected MISSING_REQUIRED_PARAM, got ${body.error?.code}`,
     );
   });
 
