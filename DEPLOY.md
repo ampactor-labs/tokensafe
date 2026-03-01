@@ -19,7 +19,7 @@
 npm install && npm test && npx tsc --noEmit
 ```
 
-212 tests pass (49 risk-score + 56 checks + 27 delta + 18 liquidity + 27 integration + 10 jupiter + 5 response-signer + 20 honeypot). Tests mock x402 and RPC — no network or wallet needed.
+247 tests pass (73 risk-score + 56 checks + 27 delta + 20 liquidity + 56 integration + 10 jupiter + 5 response-signer). Tests mock x402 and RPC — no network or wallet needed.
 
 ---
 
@@ -54,8 +54,14 @@ The smoke test validates all endpoints:
 | `GET /v1/check/lite` → 200 | Risk score, risk level, summary, full_report upsell, no `checks` (paid-only) |
 | `GET /v1/check/lite` bad mint → 400 | `INVALID_MINT_ADDRESS` error |
 | `GET /v1/check/lite` no mint → 400 | Missing parameter error |
+| `GET /v1/check/lite` enrichment | `can_sell`, `authorities_renounced`, `has_liquidity`, `token_age_hours` fields present |
 | `X-Cache` on lite | `HIT` or `MISS` header present |
+| `Cache-Control` on lite | `public, max-age=300` present |
+| `GET /v1/decide` → 200 | `decision` (SAFE/RISKY/UNKNOWN), `threshold_used`, `risk_score` |
+| `GET /v1/decide` threshold | Custom threshold applied correctly |
+| `POST /v1/check/batch/small` → 402 | x402 payment gate active on batch routes |
 | `GET /v1/check` → 402 | `PAYMENT-REQUIRED` header with x402 payment requirements |
+| `score_breakdown` paywall | Present on paid `/v1/check`, absent from `/v1/check/lite` |
 | `GET /unknown` → 404 | `NOT_FOUND` structured error |
 
 Exits 0 on pass, 1 on fail.
@@ -243,7 +249,11 @@ Without these, no agent finds you. These are machine-readable registrations — 
 | Endpoint | Method | Price | Auth | Description |
 |---|---|---|---|---|
 | `/v1/check` | GET | $0.008 USDC | x402 | Full token safety analysis with delta detection |
-| `/v1/check/lite` | GET | Free | None (rate-limited) | Risk score + summary, no detailed checks |
+| `/v1/check/lite` | GET | Free | None (rate-limited) | Risk score + summary + screening fields |
+| `/v1/decide` | GET | Free | None (rate-limited) | Binary SAFE/RISKY/UNKNOWN decision |
+| `/v1/check/batch/small` | POST | $0.025 USDC | x402 | Batch check up to 5 tokens |
+| `/v1/check/batch/medium` | POST | $0.08 USDC | x402 | Batch check up to 20 tokens |
+| `/v1/check/batch/large` | POST | $0.15 USDC | x402 | Batch check up to 50 tokens |
 | `/health` | GET | Free | None | Server status, version, cache stats |
 
 ### 6.1 MCP Registries (smithery.ai + mcp.so)
@@ -313,7 +323,7 @@ Submit manually at [x402scan](https://x402scan.com) for inclusion. No automatic 
 | `npm run dev` | `tsx watch src/index.ts` | Dev server with hot reload + pino-pretty logs |
 | `npm run build` | `tsc` | Compile to `dist/` |
 | `npm start` | `node dist/index.js` | Production server |
-| `npm test` | `vitest run` | 212 tests (mocked, no network) |
+| `npm test` | `vitest run` | 247 tests (mocked, no network) |
 | `npm run test:smoke` | `tsx scripts/smoke.ts` | Smoke test against running server |
 | `npm run test:x402` | `tsx scripts/x402-client.ts` | x402 paid request test |
 | `npm run wallet:generate` | `tsx scripts/generate-test-wallet.ts` | Generate Solana test keypair |
