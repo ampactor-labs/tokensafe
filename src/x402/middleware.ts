@@ -10,15 +10,16 @@ const facilitator = new HTTPFacilitatorClient({
 const resourceServer = new x402ResourceServer(facilitator);
 registerExactSvmScheme(resourceServer);
 
+const baseAccepts = {
+  scheme: "exact" as const,
+  network: config.networkCaip2,
+  payTo: config.treasuryWallet,
+};
+
 export const x402Middleware = paymentMiddleware(
   {
     "GET /v1/check": {
-      accepts: {
-        scheme: "exact",
-        network: config.networkCaip2,
-        payTo: config.treasuryWallet,
-        price: "$0.008",
-      },
+      accepts: { ...baseAccepts, price: "$0.008" },
       description:
         "Solana token safety check — mint authority, freeze authority, top holder concentration, liquidity, honeypot detection, metadata mutability, token age, Token-2022 extension risks, risk score",
       extensions: {
@@ -43,6 +44,18 @@ export const x402Middleware = paymentMiddleware(
           },
         },
       },
+    },
+    "POST /v1/check/batch/small": {
+      accepts: { ...baseAccepts, price: "$0.025" },
+      description: "Batch token safety check — up to 5 tokens at $0.005/token",
+    },
+    "POST /v1/check/batch/medium": {
+      accepts: { ...baseAccepts, price: "$0.08" },
+      description: "Batch token safety check — up to 20 tokens at $0.004/token",
+    },
+    "POST /v1/check/batch/large": {
+      accepts: { ...baseAccepts, price: "$0.15" },
+      description: "Batch token safety check — up to 50 tokens at $0.003/token",
     },
   },
   resourceServer,

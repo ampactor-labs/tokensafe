@@ -1,6 +1,6 @@
 import { LRUCache } from "lru-cache";
 import type { TokenCheckResult } from "../analysis/token-checker.js";
-import { ApiError } from "./errors.js";
+import { ApiError, type ErrorCode } from "./errors.js";
 
 // === Primary cache (positive results) ===
 const cache = new LRUCache<string, TokenCheckResult>({
@@ -66,10 +66,16 @@ export function setInflight(mint: string, p: Promise<TokenCheckResult>): void {
   p.finally(() => inflight.delete(mint));
 }
 
-// === Negative cache (30s error cache) ===
+// === Negative cache (error-aware TTL) ===
+const NEGATIVE_TTL_MS: Partial<Record<ErrorCode, number>> = {
+  TOKEN_NOT_FOUND: 15_000, // May resolve on retry (transient RPC null)
+  RPC_ERROR: 5_000, // Transient, retry fast
+};
+const NEGATIVE_TTL_DEFAULT_MS = 30_000;
+
 const negativeCache = new LRUCache<string, ApiError>({
   max: 1_000,
-  ttl: 30_000,
+  ttl: NEGATIVE_TTL_DEFAULT_MS, // Fallback; per-item TTL overrides below
 });
 
 export function getNegativeCached(mint: string): ApiError | undefined {
@@ -77,7 +83,8 @@ export function getNegativeCached(mint: string): ApiError | undefined {
 }
 
 export function setNegativeCached(mint: string, err: ApiError): void {
-  negativeCache.set(mint, err);
+  const ttl = NEGATIVE_TTL_MS[err.code] ?? NEGATIVE_TTL_DEFAULT_MS;
+  negativeCache.set(mint, err, { ttl });
 }
 
 // === Clear all caches (for tests) ===

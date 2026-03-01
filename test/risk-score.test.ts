@@ -587,6 +587,84 @@ describe("computeRiskScore", () => {
     expect(result.risk_level).toBe("LOW");
   });
 
+  // --- Score breakdown ---
+  it("returns empty breakdown for clean token (score 0)", () => {
+    const result = computeRiskScore(makeInput());
+    expect(result.breakdown).toEqual({});
+    expect(result.risk_score).toBe(0);
+  });
+
+  it("breakdown keys match contributing checks", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({ mintAuthority: "A", freezeAuthority: "B" }),
+        holders: makeHolders({ top_10_percentage: 0 }),
+      }),
+    );
+    expect(result.breakdown).toHaveProperty("mint_authority");
+    expect(result.breakdown).toHaveProperty("freeze_authority");
+    expect(Object.keys(result.breakdown)).toHaveLength(2);
+  });
+
+  it("breakdown values sum to risk_score (before cap)", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({ mintAuthority: "A" }),
+        holders: makeHolders({
+          top_10_percentage: 55,
+          top_1_percentage: 25,
+        }),
+        liquidity: null,
+        metadata: makeMetadata({ mutable: true }),
+        tokenAge: makeAge({ token_age_hours: 0.5 }),
+      }),
+    );
+    const sum = Object.values(result.breakdown).reduce((a, b) => a + b, 0);
+    // Score may be capped at 100, but breakdown sum reflects actual penalties
+    expect(sum).toBeGreaterThanOrEqual(result.risk_score);
+  });
+
+  it("breakdown tracks honeypot and sell_tax as separate keys", () => {
+    const result = computeRiskScore(
+      makeInput({
+        honeypot: makeHoneypot({
+          can_sell: false,
+          sell_tax_bps: 2000,
+          risk: "DANGEROUS",
+        }),
+      }),
+    );
+    expect(result.breakdown.honeypot).toBe(30);
+    expect(result.breakdown.sell_tax).toBe(15);
+  });
+
+  it("breakdown tracks Token-2022 extension keys", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({
+          extensions: [
+            { name: "PermanentDelegate", permanent_delegate: "X" },
+            { name: "TransferFeeConfig", transfer_fee_bps: 100 },
+            { name: "TransferHook", transfer_hook_program: "Y" },
+          ],
+        }),
+      }),
+    );
+    expect(result.breakdown.permanent_delegate).toBe(30);
+    expect(result.breakdown.transfer_fee).toBe(5);
+    expect(result.breakdown.transfer_hook).toBe(15);
+  });
+
+  it("breakdown includes top_holders with combined concentration penalties", () => {
+    const result = computeRiskScore(
+      makeInput({
+        holders: makeHolders({ top_10_percentage: 80, top_1_percentage: 40 }),
+        liquidity: null,
+      }),
+    );
+    expect(result.breakdown.top_holders).toBe(25); // 15 + 10
+  });
+
   it("skips mint authority penalty for PYUSD (Paxos)", () => {
     const result = computeRiskScore(
       makeInput({

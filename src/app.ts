@@ -106,6 +106,10 @@ app.get("/.well-known/x402", (_req, res) => {
       "|----------|-------|-------------|",
       "| `GET /v1/check?mint=<ADDR>` | $0.008 USDC | Full safety analysis |",
       "| `GET /v1/check/lite?mint=<ADDR>` | Free | Risk score, name, symbol, extensions |",
+      "| `GET /v1/decide?mint=<ADDR>&threshold=N` | Free | Binary SAFE/RISKY/UNKNOWN decision |",
+      "| `POST /v1/check/batch/small` | $0.025 (up to 5) | Batch safety check |",
+      "| `POST /v1/check/batch/medium` | $0.08 (up to 20) | Batch safety check |",
+      "| `POST /v1/check/batch/large` | $0.15 (up to 50) | Batch safety check |",
       "| `GET /health` | Free | Server status |",
       "",
       "## Rate Limits",
@@ -140,7 +144,14 @@ app.get("/health", healthRateLimiter, (_req, res) => {
     api_versions: {
       v1: {
         status: "active",
-        endpoints: ["/v1/check", "/v1/check/lite"],
+        endpoints: [
+          "/v1/check",
+          "/v1/check/lite",
+          "/v1/decide",
+          "/v1/check/batch/small",
+          "/v1/check/batch/medium",
+          "/v1/check/batch/large",
+        ],
       },
     },
   });
@@ -170,7 +181,70 @@ app.get("/v1/check/lite", liteRateLimiter, async (req, res, next) => {
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const { result, fromCache } = await checkTokenLite(mint, baseUrl);
     res.setHeader("X-Cache", fromCache ? "HIT" : "MISS");
+    res.setHeader(
+      "Cache-Control",
+      "public, max-age=300, stale-while-revalidate=60",
+    );
+    res.setHeader("Vary", "Accept-Encoding");
+    res.setHeader("Access-Control-Allow-Origin", "*");
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 4b. Decide endpoint — free, returns SAFE/RISKY/UNKNOWN binary decision
+app.get("/v1/decide", liteRateLimiter, async (req, res, next) => {
+  try {
+    const mint = req.query.mint as string | undefined;
+    if (!mint) {
+      throw new ApiError(
+        "MISSING_REQUIRED_PARAM",
+        "Missing required query parameter: mint",
+      );
+    }
+
+    try {
+      new PublicKey(mint);
+    } catch {
+      throw new ApiError(
+        "INVALID_MINT_ADDRESS",
+        `Invalid Solana mint address: ${mint}`,
+      );
+    }
+
+    const threshold = Math.max(
+      0,
+      Math.min(100, parseInt(req.query.threshold as string, 10) || 30),
+    );
+
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const { result, fromCache } = await checkTokenLite(mint, baseUrl);
+    res.setHeader("X-Cache", fromCache ? "HIT" : "MISS");
+    res.setHeader(
+      "Cache-Control",
+      "public, max-age=300, stale-while-revalidate=60",
+    );
+    res.setHeader("Vary", "Accept-Encoding");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+
+    let decision: "SAFE" | "RISKY" | "UNKNOWN";
+    if (result.degraded) {
+      decision = "UNKNOWN";
+    } else if (result.risk_score <= threshold) {
+      decision = "SAFE";
+    } else {
+      decision = "RISKY";
+    }
+
+    res.json({
+      mint: result.mint,
+      decision,
+      risk_score: result.risk_score,
+      risk_level: result.risk_level,
+      threshold_used: threshold,
+      full_report: result.full_report,
+    });
   } catch (err) {
     next(err);
   }
@@ -182,7 +256,89 @@ app.use(x402Middleware);
 // 6. Rate limiter for paid routes (independent bucket from health)
 app.use(paidRateLimiter);
 
-// 7. Token safety check — gated by x402
+// 7. Batch token safety check — gated by x402, tiered pricing
+function batchHandler(maxTokens: number) {
+  return async (
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    try {
+      const { mints } = req.body as { mints?: unknown };
+      if (!Array.isArray(mints) || mints.length === 0) {
+        throw new ApiError(
+          "MISSING_REQUIRED_PARAM",
+          "Request body must include a non-empty 'mints' array",
+        );
+      }
+      if (mints.length > maxTokens) {
+        throw new ApiError(
+          "TOO_MANY_MINTS",
+          `This tier supports up to ${maxTokens} mints, got ${mints.length}`,
+        );
+      }
+
+      // Validate all mints are valid base58 before running any checks
+      for (const mint of mints) {
+        if (typeof mint !== "string") {
+          throw new ApiError(
+            "INVALID_MINT_ADDRESS",
+            `Invalid mint address: expected string, got ${typeof mint}`,
+          );
+        }
+        try {
+          new PublicKey(mint);
+        } catch {
+          throw new ApiError(
+            "INVALID_MINT_ADDRESS",
+            `Invalid Solana mint address: ${mint}`,
+          );
+        }
+      }
+
+      const settled = await Promise.allSettled(
+        mints.map((mint: string) => checkToken(mint)),
+      );
+
+      const results = settled.map((outcome, i) => {
+        if (outcome.status === "fulfilled") {
+          return outcome.value.result;
+        }
+        const err = outcome.reason;
+        return {
+          mint: mints[i],
+          status: "error" as const,
+          error: {
+            code:
+              err instanceof ApiError ? err.code : ("INTERNAL_ERROR" as const),
+            message: err instanceof Error ? err.message : "Unknown error",
+          },
+        };
+      });
+
+      const succeeded = results.filter(
+        (r) => !("status" in r && r.status === "error"),
+      ).length;
+
+      res.json({
+        total: mints.length,
+        succeeded,
+        failed: mints.length - succeeded,
+        checked_at: new Date().toISOString(),
+        results,
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+const jsonParser = express.json();
+app.post("/v1/check/batch/small", jsonParser, batchHandler(5));
+app.post("/v1/check/batch/medium", jsonParser, batchHandler(20));
+app.post("/v1/check/batch/large", jsonParser, batchHandler(50));
+
+// 8. Token safety check — gated by x402
 app.get("/v1/check", async (req, res, next) => {
   try {
     const mint = req.query.mint as string | undefined;
@@ -195,6 +351,7 @@ app.get("/v1/check", async (req, res, next) => {
 
     const { result, fromCache } = await checkToken(mint);
     res.setHeader("X-Cache", fromCache ? "HIT" : "MISS");
+    res.setHeader("Cache-Control", "private, no-store");
     res.json(result);
   } catch (err) {
     next(err);

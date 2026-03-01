@@ -78,6 +78,7 @@ function makeResult(overrides?: Partial<TokenCheckResult>): CheckTokenResponse {
     degraded_checks: [],
     changes: null,
     alerts: [],
+    score_breakdown: {},
     response_signature: "deadbeef",
     signer_pubkey: "cafebabe",
     ...overrides,
@@ -98,6 +99,13 @@ function makeLiteResult(
     degraded: false,
     is_token_2022: false,
     has_risky_extensions: false,
+    can_sell: true,
+    authorities_renounced: true,
+    has_liquidity: true,
+    token_age_hours: 8760,
+    risk_score_delta: null,
+    previous_risk_score: null,
+    previous_risk_level: null,
     full_report: {
       url: `/v1/check?mint=${WSOL}`,
       price_usd: "$0.008",
@@ -148,7 +156,11 @@ describe("GET /health", () => {
     expect(res.body.api_versions).toMatchObject({
       v1: {
         status: "active",
-        endpoints: expect.arrayContaining(["/v1/check", "/v1/check/lite"]),
+        endpoints: expect.arrayContaining([
+          "/v1/check",
+          "/v1/check/lite",
+          "/v1/decide",
+        ]),
       },
     });
   });
@@ -351,6 +363,288 @@ describe("GET /v1/check/lite", () => {
   });
 });
 
+describe("GET /v1/check score_breakdown", () => {
+  it("includes score_breakdown in paid response", async () => {
+    mockCheckToken.mockResolvedValue(
+      makeResult({ score_breakdown: { mint_authority: 30, liquidity: 15 } }),
+    );
+    const res = await request(app).get(`/v1/check?mint=${WSOL}`);
+    expect(res.status).toBe(200);
+    expect(res.body.score_breakdown).toEqual({
+      mint_authority: 30,
+      liquidity: 15,
+    });
+  });
+});
+
+describe("GET /v1/check/lite enrichment", () => {
+  it("includes can_sell, authorities_renounced, has_liquidity, token_age_hours", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult());
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.status).toBe(200);
+    expect(res.body.can_sell).toBe(true);
+    expect(res.body.authorities_renounced).toBe(true);
+    expect(res.body.has_liquidity).toBe(true);
+    expect(res.body.token_age_hours).toBe(8760);
+  });
+
+  it("returns null can_sell when honeypot check unavailable", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult({ can_sell: null }));
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.body.can_sell).toBeNull();
+  });
+
+  it("returns authorities_renounced false when mint authority active", async () => {
+    mockCheckTokenLite.mockResolvedValue(
+      makeLiteResult({ authorities_renounced: false }),
+    );
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.body.authorities_renounced).toBe(false);
+  });
+
+  it("returns has_liquidity false when no liquidity", async () => {
+    mockCheckTokenLite.mockResolvedValue(
+      makeLiteResult({ has_liquidity: false }),
+    );
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.body.has_liquidity).toBe(false);
+  });
+
+  it("returns null delta fields on first check", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult());
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.body.risk_score_delta).toBeNull();
+    expect(res.body.previous_risk_score).toBeNull();
+    expect(res.body.previous_risk_level).toBeNull();
+  });
+
+  it("returns positive delta when risk increased", async () => {
+    mockCheckTokenLite.mockResolvedValue(
+      makeLiteResult({
+        risk_score_delta: 25,
+        previous_risk_score: 15,
+        previous_risk_level: "LOW",
+      }),
+    );
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.body.risk_score_delta).toBe(25);
+    expect(res.body.previous_risk_score).toBe(15);
+    expect(res.body.previous_risk_level).toBe("LOW");
+  });
+
+  it("returns negative delta when risk decreased", async () => {
+    mockCheckTokenLite.mockResolvedValue(
+      makeLiteResult({
+        risk_score_delta: -10,
+        previous_risk_score: 25,
+        previous_risk_level: "MODERATE",
+      }),
+    );
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.body.risk_score_delta).toBe(-10);
+  });
+
+  it("does not leak paywalled fields", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult());
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.body.checks).toBeUndefined();
+    expect(res.body.changes).toBeUndefined();
+    expect(res.body.alerts).toBeUndefined();
+    expect(res.body.rpc_slot).toBeUndefined();
+    expect(res.body.response_signature).toBeUndefined();
+    expect(res.body.score_breakdown).toBeUndefined();
+  });
+});
+
+describe("GET /v1/decide", () => {
+  it("returns SAFE when risk_score <= threshold", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult({ risk_score: 15 }));
+    const res = await request(app).get(`/v1/decide?mint=${WSOL}&threshold=30`);
+    expect(res.status).toBe(200);
+    expect(res.body.decision).toBe("SAFE");
+    expect(res.body.risk_score).toBe(15);
+    expect(res.body.threshold_used).toBe(30);
+    expect(res.body.mint).toBe(WSOL);
+    expect(res.body.full_report).toBeDefined();
+  });
+
+  it("returns RISKY when risk_score > threshold", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult({ risk_score: 45 }));
+    const res = await request(app).get(`/v1/decide?mint=${WSOL}&threshold=30`);
+    expect(res.body.decision).toBe("RISKY");
+    expect(res.body.risk_score).toBe(45);
+  });
+
+  it("returns UNKNOWN when degraded", async () => {
+    mockCheckTokenLite.mockResolvedValue(
+      makeLiteResult({ risk_score: 5, degraded: true }),
+    );
+    const res = await request(app).get(`/v1/decide?mint=${WSOL}`);
+    expect(res.body.decision).toBe("UNKNOWN");
+  });
+
+  it("uses default threshold of 30", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult({ risk_score: 30 }));
+    const res = await request(app).get(`/v1/decide?mint=${WSOL}`);
+    expect(res.body.decision).toBe("SAFE"); // 30 <= 30
+    expect(res.body.threshold_used).toBe(30);
+  });
+
+  it("clamps threshold to 0-100 range", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult({ risk_score: 5 }));
+    const res = await request(app).get(`/v1/decide?mint=${WSOL}&threshold=200`);
+    expect(res.body.threshold_used).toBe(100);
+  });
+
+  it("returns 400 for missing mint", async () => {
+    const res = await request(app).get("/v1/decide");
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("MISSING_REQUIRED_PARAM");
+  });
+});
+
+describe("CDN headers", () => {
+  it("lite endpoint has public Cache-Control", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult());
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.headers["cache-control"]).toBe(
+      "public, max-age=300, stale-while-revalidate=60",
+    );
+    expect(res.headers["vary"]).toContain("Accept-Encoding");
+    expect(res.headers["access-control-allow-origin"]).toBe("*");
+  });
+
+  it("paid endpoint has private Cache-Control", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    const res = await request(app).get(`/v1/check?mint=${WSOL}`);
+    expect(res.headers["cache-control"]).toBe("private, no-store");
+  });
+
+  it("decide endpoint has public Cache-Control and CORS", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult());
+    const res = await request(app).get(`/v1/decide?mint=${WSOL}`);
+    expect(res.headers["cache-control"]).toBe(
+      "public, max-age=300, stale-while-revalidate=60",
+    );
+    expect(res.headers["access-control-allow-origin"]).toBe("*");
+  });
+});
+
+describe("POST /v1/check/batch/*", () => {
+  it("batch/small returns results for valid mints", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    const res = await request(app)
+      .post("/v1/check/batch/small")
+      .send({ mints: [WSOL] });
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(1);
+    expect(res.body.succeeded).toBe(1);
+    expect(res.body.failed).toBe(0);
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].mint).toBe(WSOL);
+  });
+
+  it("batch/small rejects more than 5 mints", async () => {
+    const mints = Array(6).fill(WSOL);
+    const res = await request(app)
+      .post("/v1/check/batch/small")
+      .send({ mints });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("TOO_MANY_MINTS");
+  });
+
+  it("batch/medium allows up to 20 mints", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    const mints = Array(20).fill(WSOL);
+    const res = await request(app)
+      .post("/v1/check/batch/medium")
+      .send({ mints });
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(20);
+  });
+
+  it("batch/medium rejects more than 20 mints", async () => {
+    const mints = Array(21).fill(WSOL);
+    const res = await request(app)
+      .post("/v1/check/batch/medium")
+      .send({ mints });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("TOO_MANY_MINTS");
+  });
+
+  it("batch/large allows up to 50 mints", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    const mints = Array(50).fill(WSOL);
+    const res = await request(app)
+      .post("/v1/check/batch/large")
+      .send({ mints });
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(50);
+  });
+
+  it("batch/large rejects more than 50 mints", async () => {
+    const mints = Array(51).fill(WSOL);
+    const res = await request(app)
+      .post("/v1/check/batch/large")
+      .send({ mints });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("TOO_MANY_MINTS");
+  });
+
+  it("returns 400 for empty mints array", async () => {
+    const res = await request(app)
+      .post("/v1/check/batch/small")
+      .send({ mints: [] });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("MISSING_REQUIRED_PARAM");
+  });
+
+  it("returns 400 for missing mints field", async () => {
+    const res = await request(app).post("/v1/check/batch/small").send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("MISSING_REQUIRED_PARAM");
+  });
+
+  it("returns 400 for invalid base58 in batch", async () => {
+    const res = await request(app)
+      .post("/v1/check/batch/small")
+      .send({ mints: [WSOL, "not-a-valid-mint"] });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_MINT_ADDRESS");
+  });
+
+  it("handles mixed success/failure in batch results", async () => {
+    const { ApiError } = await import("../src/utils/errors.js");
+    let callCount = 0;
+    mockCheckToken.mockImplementation(async () => {
+      callCount++;
+      if (callCount === 2) {
+        throw new ApiError("TOKEN_NOT_FOUND", "Token not found");
+      }
+      return makeResult();
+    });
+    const VALID_MINT2 = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    const res = await request(app)
+      .post("/v1/check/batch/small")
+      .send({ mints: [WSOL, VALID_MINT2] });
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(2);
+    expect(res.body.succeeded).toBe(1);
+    expect(res.body.failed).toBe(1);
+    const errorResult = res.body.results.find((r: any) => r.status === "error");
+    expect(errorResult.error.code).toBe("TOKEN_NOT_FOUND");
+  });
+
+  it("includes checked_at timestamp in batch response", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    const res = await request(app)
+      .post("/v1/check/batch/small")
+      .send({ mints: [WSOL] });
+    expect(res.body.checked_at).toBeDefined();
+    expect(new Date(res.body.checked_at).getTime()).not.toBeNaN();
+  });
+});
+
 describe("404 handler", () => {
   it("returns 404 for unknown routes", async () => {
     const res = await request(app).get("/no-such-route");
@@ -358,7 +652,7 @@ describe("404 handler", () => {
     expect(res.body.error.code).toBe("NOT_FOUND");
   });
 
-  it("returns 404 for removed batch endpoint", async () => {
+  it("returns 404 for old /v1/batch path (now /v1/check/batch/*)", async () => {
     const res = await request(app).get(`/v1/batch?mints=${WSOL}`);
     expect(res.status).toBe(404);
   });
