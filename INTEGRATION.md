@@ -326,3 +326,74 @@ const valid = crypto.verify(null, digest, pubKey, Buffer.from(data.response_sign
 ## Caching
 
 Results are cached for 5 minutes. Repeated checks within this window return `X-Cache: HIT` instantly. You still pay per request — the cache saves latency, not cost.
+
+## Webhook Monitoring
+
+Subscribe to risk alerts for specific mints. The server polls watched mints on a background interval and POSTs to your callback URL when `risk_score >= threshold`.
+
+**Authentication:** All webhook endpoints require `Authorization: Bearer <WEBHOOK_ADMIN_BEARER>`.
+
+### Create Subscription
+
+```bash
+curl -X POST https://tokensafe-production.up.railway.app/v1/webhooks \
+  -H "Authorization: Bearer $WEBHOOK_ADMIN_BEARER" \
+  -H "Content-Type: application/json" \
+  -d '{"callback_url": "https://your-server.com/hook", "mints": ["So11111111111111111111111111111111111111112"], "threshold": 50}'
+```
+
+Returns 201 with the subscription object, including the full `secret_hmac` (shown only on creation — save it).
+
+### List Subscriptions
+
+```bash
+curl https://tokensafe-production.up.railway.app/v1/webhooks \
+  -H "Authorization: Bearer $WEBHOOK_ADMIN_BEARER"
+```
+
+Returns array of subscriptions. Secrets redacted to `***<last 8 chars>`.
+
+### Update Subscription
+
+```bash
+curl -X PATCH https://tokensafe-production.up.railway.app/v1/webhooks/1 \
+  -H "Authorization: Bearer $WEBHOOK_ADMIN_BEARER" \
+  -H "Content-Type: application/json" \
+  -d '{"threshold": 75, "active": false}'
+```
+
+### Delete Subscription
+
+```bash
+curl -X DELETE https://tokensafe-production.up.railway.app/v1/webhooks/1 \
+  -H "Authorization: Bearer $WEBHOOK_ADMIN_BEARER"
+```
+
+Returns 204 on success.
+
+### Verifying Webhook Deliveries
+
+Each delivery includes an HMAC-SHA256 signature in `X-TokenSafe-Signature`:
+
+```typescript
+import crypto from "node:crypto";
+
+function verifyWebhook(body: string, signature: string, secret: string): boolean {
+  const expected = "sha256=" + crypto.createHmac("sha256", secret).update(body).digest("hex");
+  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+}
+```
+
+Delivery payload:
+
+```json
+{
+  "mint": "So11111111111111111111111111111111111111112",
+  "risk_score": 75,
+  "risk_level": "CRITICAL",
+  "summary": "active mint authority, no liquidity detected",
+  "checked_at": "2026-03-01T12:00:00.000Z"
+}
+```
+
+Retry policy: 3 attempts max with exponential backoff (1min, 5min, then abandoned).
