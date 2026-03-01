@@ -22,6 +22,7 @@ import { app } from "../src/app.js";
 import { checkToken, checkTokenLite } from "../src/analysis/token-checker.js";
 import { clearCache } from "../src/utils/cache.js";
 import { clearRateLimitBuckets } from "../src/utils/rate-limit.js";
+import { initTestDb, closeDb } from "../src/utils/db.js";
 
 const mockCheckToken = vi.mocked(checkToken);
 const mockCheckTokenLite = vi.mocked(checkTokenLite);
@@ -160,6 +161,7 @@ describe("GET /health", () => {
           "/v1/check",
           "/v1/check/lite",
           "/v1/decide",
+          "/v1/webhooks",
         ]),
       },
     });
@@ -642,6 +644,153 @@ describe("POST /v1/check/batch/*", () => {
       .send({ mints: [WSOL] });
     expect(res.body.checked_at).toBeDefined();
     expect(new Date(res.body.checked_at).getTime()).not.toBeNaN();
+  });
+});
+
+describe("Webhook CRUD /v1/webhooks", () => {
+  const AUTH = { Authorization: "Bearer test-webhook-bearer" };
+
+  beforeEach(() => {
+    closeDb();
+    initTestDb();
+  });
+
+  it("rejects requests without bearer token", async () => {
+    const res = await request(app).get("/v1/webhooks");
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe("UNAUTHORIZED");
+  });
+
+  it("rejects requests with wrong bearer token", async () => {
+    const res = await request(app)
+      .get("/v1/webhooks")
+      .set("Authorization", "Bearer wrong-token");
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe("UNAUTHORIZED");
+  });
+
+  it("creates subscription with 201 and full HMAC secret", async () => {
+    const res = await request(app)
+      .post("/v1/webhooks")
+      .set(AUTH)
+      .send({ callback_url: "https://example.com/hook", mints: [WSOL] });
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBeDefined();
+    expect(res.body.callback_url).toBe("https://example.com/hook");
+    expect(res.body.mints).toEqual([WSOL]);
+    expect(res.body.threshold).toBe(50);
+    expect(res.body.active).toBe(true);
+    // Full secret shown only on creation — 32 bytes hex = 64 chars
+    expect(res.body.secret_hmac).toHaveLength(64);
+  });
+
+  it("creates subscription with custom threshold", async () => {
+    const res = await request(app)
+      .post("/v1/webhooks")
+      .set(AUTH)
+      .send({
+        callback_url: "https://example.com/hook",
+        mints: [WSOL],
+        threshold: 75,
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.threshold).toBe(75);
+  });
+
+  it("rejects creation with missing callback_url", async () => {
+    const res = await request(app)
+      .post("/v1/webhooks")
+      .set(AUTH)
+      .send({ mints: [WSOL] });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("MISSING_REQUIRED_PARAM");
+  });
+
+  it("rejects creation with empty mints", async () => {
+    const res = await request(app)
+      .post("/v1/webhooks")
+      .set(AUTH)
+      .send({ callback_url: "https://example.com/hook", mints: [] });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("MISSING_REQUIRED_PARAM");
+  });
+
+  it("rejects creation with invalid base58 mint", async () => {
+    const res = await request(app)
+      .post("/v1/webhooks")
+      .set(AUTH)
+      .send({
+        callback_url: "https://example.com/hook",
+        mints: ["not-base58!!!"],
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_MINT_ADDRESS");
+  });
+
+  it("lists subscriptions with redacted secrets", async () => {
+    await request(app)
+      .post("/v1/webhooks")
+      .set(AUTH)
+      .send({ callback_url: "https://example.com/hook", mints: [WSOL] });
+
+    const res = await request(app).get("/v1/webhooks").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0].secret_hmac).toMatch(/^\*\*\*.{8}$/);
+    expect(res.body[0].mints).toEqual([WSOL]);
+  });
+
+  it("returns empty array when no subscriptions", async () => {
+    const res = await request(app).get("/v1/webhooks").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("updates subscription and returns redacted secret", async () => {
+    const createRes = await request(app)
+      .post("/v1/webhooks")
+      .set(AUTH)
+      .send({ callback_url: "https://example.com/hook", mints: [WSOL] });
+
+    const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    const res = await request(app)
+      .patch(`/v1/webhooks/${createRes.body.id}`)
+      .set(AUTH)
+      .send({ threshold: 80, mints: [WSOL, USDC] });
+    expect(res.status).toBe(200);
+    expect(res.body.threshold).toBe(80);
+    expect(res.body.mints).toEqual([WSOL, USDC]);
+    expect(res.body.secret_hmac).toMatch(/^\*\*\*.{8}$/);
+  });
+
+  it("returns 404 when updating non-existent subscription", async () => {
+    const res = await request(app)
+      .patch("/v1/webhooks/999")
+      .set(AUTH)
+      .send({ threshold: 80 });
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe("WEBHOOK_NOT_FOUND");
+  });
+
+  it("deletes subscription and returns 204", async () => {
+    const createRes = await request(app)
+      .post("/v1/webhooks")
+      .set(AUTH)
+      .send({ callback_url: "https://example.com/hook", mints: [WSOL] });
+
+    const res = await request(app)
+      .delete(`/v1/webhooks/${createRes.body.id}`)
+      .set(AUTH);
+    expect(res.status).toBe(204);
+
+    const listRes = await request(app).get("/v1/webhooks").set(AUTH);
+    expect(listRes.body).toEqual([]);
+  });
+
+  it("returns 404 when deleting non-existent subscription", async () => {
+    const res = await request(app).delete("/v1/webhooks/999").set(AUTH);
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe("WEBHOOK_NOT_FOUND");
   });
 });
 
