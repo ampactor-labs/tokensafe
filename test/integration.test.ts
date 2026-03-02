@@ -132,7 +132,7 @@ describe("GET /health", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       status: "ok",
-      version: "0.2.0",
+      version: "1.0.0",
       cache: {
         size: expect.any(Number),
         maxSize: 10000,
@@ -1001,6 +1001,42 @@ describe("health endpoint includes api-keys and audit routes", () => {
     expect(endpoints).toContain("/v1/audit/standard");
     expect(endpoints).toContain("/v1/audit/history");
     expect(endpoints).toContain("/v1/audit/:id/report");
+  });
+});
+
+describe("GET /metrics", () => {
+  const AUTH = { Authorization: "Bearer test-webhook-bearer" };
+
+  it("returns 401 without bearer token", async () => {
+    const res = await request(app).get("/metrics");
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe("UNAUTHORIZED");
+  });
+
+  it("returns 401 with wrong bearer token", async () => {
+    const res = await request(app)
+      .get("/metrics")
+      .set("Authorization", "Bearer wrong-token");
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe("UNAUTHORIZED");
+  });
+
+  it("returns 200 with correct bearer and prometheus format", async () => {
+    const res = await request(app).get("/metrics").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/plain");
+  });
+
+  it("response contains tokensafe_ metric names", async () => {
+    const res = await request(app).get("/metrics").set(AUTH);
+    expect(res.text).toContain("tokensafe_http_request_duration_seconds");
+    expect(res.text).toContain("tokensafe_http_requests_total");
+    expect(res.text).toContain("tokensafe_token_checks_total");
+  });
+
+  it("lists /metrics in health endpoint api_versions", async () => {
+    const res = await request(app).get("/health");
+    expect(res.body.api_versions.v1.endpoints).toContain("/metrics");
   });
 });
 

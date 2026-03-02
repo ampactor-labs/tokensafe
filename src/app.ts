@@ -32,6 +32,13 @@ import {
   hashAuditResults,
   signAuditAttestation,
 } from "./utils/response-signer.js";
+import {
+  registry,
+  httpRequestDuration,
+  httpRequestsTotal,
+  tokenChecksTotal,
+  apiKeyRequestsTotal,
+} from "./utils/metrics.js";
 import { createMcpServer } from "./mcp/server.js";
 import {
   evaluatePolicy,
@@ -99,6 +106,15 @@ app.use((req, res, next) => {
       },
       "request",
     );
+
+    // Prometheus metrics — route pattern prevents cardinality explosion from unique mints
+    const route =
+      (req.route?.path as string | undefined) ?? req.path.split("?")[0];
+    const status = String(res.statusCode);
+    httpRequestDuration
+      .labels(req.method, route, status)
+      .observe(latencyMs / 1000);
+    httpRequestsTotal.labels(req.method, route, status).inc();
   });
   next();
 });
@@ -180,7 +196,7 @@ app.get("/.well-known/x402", (_req, res) => {
 app.get("/health", healthRateLimiter, (_req, res) => {
   res.json({
     status: "ok",
-    version: "0.2.0",
+    version: "1.0.0",
     network: config.solanaNetwork,
     uptime: Math.floor((Date.now() - startTime) / 1000),
     cache: cacheStats(),
@@ -202,6 +218,7 @@ app.get("/health", healthRateLimiter, (_req, res) => {
           "/v1/audit/:id/report",
           "/v1/webhooks",
           "/v1/api-keys",
+          "/metrics",
         ],
       },
     },
@@ -222,6 +239,7 @@ app.get("/v1/check/lite", liteRateLimiter, async (req, res, next) => {
 
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const { result, fromCache } = await checkTokenLite(mint, baseUrl);
+    tokenChecksTotal.labels("lite").inc();
     res.setHeader("X-Cache", fromCache ? "HIT" : "MISS");
     res.setHeader(
       "Cache-Control",
@@ -704,6 +722,32 @@ app.get(
   },
 );
 
+// 4f. Prometheus metrics — bearer-protected, same auth as webhooks
+app.get("/metrics", (req, res, next) => {
+  if (!config.webhookAdminBearer) {
+    return res
+      .status(404)
+      .json({ error: { code: "NOT_FOUND", message: "Not found" } });
+  }
+  const hdr = req.headers.authorization ?? "";
+  const expected = `Bearer ${config.webhookAdminBearer}`;
+  if (
+    hdr.length !== expected.length ||
+    !crypto.timingSafeEqual(Buffer.from(hdr), Buffer.from(expected))
+  ) {
+    return res
+      .status(401)
+      .json({ error: { code: "UNAUTHORIZED", message: "Invalid bearer" } });
+  }
+  registry
+    .metrics()
+    .then((data) => {
+      res.setHeader("Content-Type", registry.contentType);
+      res.send(data);
+    })
+    .catch(next);
+});
+
 // 5. API key middleware — validates X-API-Key header, sets req.apiKeyRecord
 app.use(
   (
@@ -757,6 +801,7 @@ app.use(
     const record = req.apiKeyRecord;
     if (record) {
       incrementUsage(record.id);
+      apiKeyRequestsTotal.labels(record.tier).inc();
       const usage = checkUsageLimit(record.id);
       res.setHeader("X-API-Key-Tier", record.tier);
       res.setHeader(
@@ -833,6 +878,8 @@ function batchHandler(maxTokens: number) {
       const succeeded = results.filter(
         (r) => !("status" in r && r.status === "error"),
       ).length;
+
+      tokenChecksTotal.labels("batch").inc();
 
       res.json({
         total: mints.length,
@@ -969,6 +1016,8 @@ function auditHandler(maxTokens: number) {
         // Best-effort
       }
 
+      tokenChecksTotal.labels("audit").inc();
+
       res.json({
         audit_id: auditId,
         created_at: createdAt,
@@ -1008,6 +1057,7 @@ app.get("/v1/check", async (req, res, next) => {
     }
 
     const { result, fromCache } = await checkToken(mint);
+    tokenChecksTotal.labels(req.apiKeyRecord ? "api_key" : "x402").inc();
     res.setHeader("X-Cache", fromCache ? "HIT" : "MISS");
     res.setHeader("Cache-Control", "private, no-store");
     res.json(result);
