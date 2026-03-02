@@ -26,6 +26,20 @@ export interface WebhookDelivery {
   next_retry_at: string | null;
 }
 
+export interface AuditResultRow {
+  id: string;
+  api_key_id: number | null;
+  mints_json: string;
+  policy_json: string;
+  results_json: string;
+  violations_json: string;
+  aggregate_risk_score: number;
+  attestation_hash: string;
+  attestation_signature: string;
+  created_at: string;
+  expires_at: string;
+}
+
 // Raw row shape from SQLite (booleans are 0/1 integers, mints is JSON string)
 interface WebhookSubscriptionRow {
   id: number;
@@ -90,6 +104,23 @@ CREATE TABLE IF NOT EXISTS api_key_usage (
   FOREIGN KEY (api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE,
   UNIQUE(api_key_id, month)
 );
+
+CREATE TABLE IF NOT EXISTS audit_results (
+  id TEXT PRIMARY KEY,
+  api_key_id INTEGER,
+  mints_json TEXT NOT NULL,
+  policy_json TEXT NOT NULL,
+  results_json TEXT NOT NULL,
+  violations_json TEXT NOT NULL,
+  aggregate_risk_score REAL NOT NULL,
+  attestation_hash TEXT NOT NULL,
+  attestation_signature TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_results(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_api_key ON audit_results(api_key_id);
 `;
 
 // ─── Singleton ───────────────────────────────────────────────────────────────

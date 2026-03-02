@@ -1,0 +1,159 @@
+import type { AuditResultRow } from "./db.js";
+import type { PolicyViolation } from "../analysis/policy-engine.js";
+import { METHODOLOGY_VERSION } from "../analysis/risk-score.js";
+import { getSignerPubkey } from "./response-signer.js";
+
+interface AuditTokenResult {
+  mint: string;
+  name?: string | null;
+  symbol?: string | null;
+  risk_score: number;
+  risk_level: string;
+  checks?: {
+    mint_authority?: { status: string };
+    freeze_authority?: { status: string };
+    liquidity?: { has_liquidity: boolean; liquidity_rating?: string } | null;
+    honeypot?: { can_sell: boolean } | null;
+    is_token_2022?: boolean;
+  };
+}
+
+function getRiskDistribution(
+  results: AuditTokenResult[],
+): Record<string, number> {
+  const dist: Record<string, number> = {};
+  for (const r of results) {
+    dist[r.risk_level] = (dist[r.risk_level] ?? 0) + 1;
+  }
+  return dist;
+}
+
+export function generateMarkdownReport(row: AuditResultRow): string {
+  const results = JSON.parse(row.results_json) as (
+    | AuditTokenResult
+    | {
+        mint: string;
+        status: "error";
+        error: { code: string; message: string };
+      }
+  )[];
+  const violations = JSON.parse(row.violations_json) as PolicyViolation[];
+  const mints = JSON.parse(row.mints_json) as string[];
+
+  const succeeded = results.filter(
+    (r) => !("status" in r && r.status === "error"),
+  ) as AuditTokenResult[];
+  const failed = results.filter(
+    (r) => "status" in r && r.status === "error",
+  ).length;
+
+  const dist = getRiskDistribution(succeeded);
+  const blockCount = violations.filter((v) => v.action === "block").length;
+  const warnCount = violations.filter((v) => v.action === "warn").length;
+
+  const lines: string[] = [];
+
+  // Header
+  lines.push("# TokenSafe Compliance Report");
+  lines.push("");
+  lines.push(`- **Audit ID:** ${row.id}`);
+  lines.push(`- **Date:** ${row.created_at}`);
+  lines.push(`- **Expires:** ${row.expires_at}`);
+  lines.push("");
+
+  // Executive Summary
+  lines.push("## Executive Summary");
+  lines.push("");
+  lines.push(`- **Tokens analyzed:** ${mints.length}`);
+  lines.push(`- **Succeeded:** ${succeeded.length}`);
+  lines.push(`- **Failed:** ${failed}`);
+  lines.push(
+    `- **Aggregate risk score:** ${row.aggregate_risk_score.toFixed(1)}`,
+  );
+  lines.push(
+    `- **Policy violations:** ${violations.length} (${blockCount} block, ${warnCount} warn)`,
+  );
+  lines.push("");
+
+  // Risk Distribution
+  lines.push("## Risk Distribution");
+  lines.push("");
+  lines.push("| Level | Count |");
+  lines.push("|-------|-------|");
+  for (const level of ["LOW", "MODERATE", "HIGH", "CRITICAL", "EXTREME"]) {
+    if (dist[level]) {
+      lines.push(`| ${level} | ${dist[level]} |`);
+    }
+  }
+  lines.push("");
+
+  // Policy Violations
+  if (violations.length > 0) {
+    lines.push("## Policy Violations");
+    lines.push("");
+    lines.push("| Rule | Action | Message | Actual Value |");
+    lines.push("|------|--------|---------|--------------|");
+    for (const v of violations) {
+      const actual =
+        typeof v.actual_value === "object"
+          ? JSON.stringify(v.actual_value)
+          : String(v.actual_value);
+      lines.push(
+        `| ${v.rule_id} | ${v.action.toUpperCase()} | ${v.message} | ${actual} |`,
+      );
+    }
+    lines.push("");
+  }
+
+  // Token Details
+  lines.push("## Token Details");
+  lines.push("");
+  for (const r of results) {
+    if ("status" in r && r.status === "error") {
+      lines.push(`### ${r.mint}`);
+      lines.push("");
+      lines.push(`**Error:** ${r.error.code} — ${r.error.message}`);
+      lines.push("");
+      continue;
+    }
+    const token = r as AuditTokenResult;
+    const label = [token.name, token.symbol ? `(${token.symbol})` : null]
+      .filter(Boolean)
+      .join(" ");
+    lines.push(`### ${token.mint}${label ? ` — ${label}` : ""}`);
+    lines.push("");
+    lines.push(`- **Risk score:** ${token.risk_score}`);
+    lines.push(`- **Risk level:** ${token.risk_level}`);
+    if (token.checks) {
+      lines.push(
+        `- **Mint authority:** ${token.checks.mint_authority?.status ?? "N/A"}`,
+      );
+      lines.push(
+        `- **Freeze authority:** ${token.checks.freeze_authority?.status ?? "N/A"}`,
+      );
+      lines.push(
+        `- **Liquidity:** ${token.checks.liquidity?.has_liquidity ? `Yes (${token.checks.liquidity.liquidity_rating ?? "N/A"})` : "No"}`,
+      );
+      lines.push(`- **Can sell:** ${token.checks.honeypot?.can_sell ?? "N/A"}`);
+      lines.push(`- **Token-2022:** ${token.checks.is_token_2022 ?? false}`);
+    }
+    lines.push("");
+  }
+
+  // Attestation
+  lines.push("## Attestation");
+  lines.push("");
+  lines.push(`- **Hash:** ${row.attestation_hash}`);
+  lines.push(`- **Signature:** ${row.attestation_signature}`);
+  lines.push(`- **Signer pubkey:** ${getSignerPubkey()}`);
+  lines.push("");
+
+  // Footer
+  lines.push("---");
+  lines.push("");
+  lines.push(
+    `*Generated by TokenSafe v${METHODOLOGY_VERSION}. This report is for informational purposes only and does not constitute financial advice.*`,
+  );
+
+  return lines.join("\n");
+}

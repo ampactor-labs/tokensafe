@@ -57,6 +57,16 @@ export const x402Middleware = paymentMiddleware(
       accepts: { ...baseAccepts, price: "$0.15" },
       description: "Batch token safety check — up to 50 tokens at $0.003/token",
     },
+    "POST /v1/audit/small": {
+      accepts: { ...baseAccepts, price: "$0.08" },
+      description:
+        "Treasury audit — up to 10 tokens with policy evaluation and compliance report",
+    },
+    "POST /v1/audit/standard": {
+      accepts: { ...baseAccepts, price: "$0.30" },
+      description:
+        "Treasury audit — up to 50 tokens with policy evaluation and compliance report",
+    },
   },
   resourceServer,
 );
