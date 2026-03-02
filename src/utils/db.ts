@@ -241,17 +241,6 @@ export function deleteSubscription(id: number): boolean {
   return result.changes > 0;
 }
 
-export function getActiveSubscriptionsForMint(
-  mint: string,
-): WebhookSubscription[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT * FROM webhook_subscriptions WHERE active = 1 AND mints_json LIKE ?`,
-    )
-    .all(`%"${mint}"%`) as WebhookSubscriptionRow[];
-  return rows.map(rowToSubscription);
-}
-
 export function touchSubscriptionCheckedAt(id: number): void {
   getDb()
     .prepare(

@@ -17,7 +17,11 @@ export function stopMonitorJob(timer: NodeJS.Timeout): void {
   clearInterval(timer);
 }
 
+let isRunning = false;
+
 async function runMonitorCycle(): Promise<void> {
+  if (isRunning) return;
+  isRunning = true;
   const cycleName = "monitor-cycle";
   try {
     const allSubs = listSubscriptions().filter((s) => s.active);
@@ -73,5 +77,7 @@ async function runMonitorCycle(): Promise<void> {
     );
   } catch (err) {
     logger.error({ err, cycleName }, "Monitor cycle failed");
+  } finally {
+    isRunning = false;
   }
 }

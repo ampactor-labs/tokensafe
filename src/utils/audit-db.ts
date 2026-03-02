@@ -50,8 +50,9 @@ export function listAuditHistory(
     params.push(opts.apiKeyId);
   }
   if (opts.mint) {
-    clauses.push("mints_json LIKE ?");
-    params.push(`%"${opts.mint}"%`);
+    const escaped = opts.mint.replace(/[%_]/g, "\\$&");
+    clauses.push("mints_json LIKE ? ESCAPE '\\'");
+    params.push(`%"${escaped}"%`);
   }
   if (opts.from) {
     clauses.push("created_at >= ?");

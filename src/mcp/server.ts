@@ -1,15 +1,7 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { PublicKey } from "@solana/web3.js";
 import { checkTokenLite } from "../analysis/token-checker.js";
-
-function validateMint(address: string): void {
-  try {
-    new PublicKey(address);
-  } catch {
-    throw new Error(`Invalid Solana mint address: ${address}`);
-  }
-}
+import { validateMint } from "../utils/validation.js";
 
 async function handleToolCall(
   mintAddress: string,
@@ -44,13 +36,15 @@ export function createMcpServer(baseUrl: string = ""): McpServer {
     description:
       "Solana token safety scanner. Risk score 0-100 from pure on-chain analysis — mint/freeze authority, holder concentration, liquidity, LP locks, honeypot detection, Token-2022 extensions. Free lite check or $0.008 USDC full report via x402.",
     websiteUrl: "https://github.com/ampactor-labs/tokensafe",
-    icons: [
-      {
-        src: `${baseUrl || "https://tokensafe-production.up.railway.app"}/icon.svg`,
-        mimeType: "image/svg+xml",
-        sizes: ["any"],
-      },
-    ],
+    icons: baseUrl
+      ? [
+          {
+            src: `${baseUrl}/icon.svg`,
+            mimeType: "image/svg+xml",
+            sizes: ["any"],
+          },
+        ]
+      : [],
   });
 
   server.registerTool(
