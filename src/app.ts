@@ -265,9 +265,10 @@ app.get("/v1/decide", liteRateLimiter, async (req, res, next) => {
     }
     validateMint(mint);
 
+    const parsed = parseInt(req.query.threshold as string, 10);
     const threshold = Math.max(
       0,
-      Math.min(100, parseInt(req.query.threshold as string, 10) || 30),
+      Math.min(100, Number.isFinite(parsed) ? parsed : 30),
     );
 
     const baseUrl = `${req.protocol}://${req.get("host")}`;
