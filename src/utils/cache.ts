@@ -55,15 +55,17 @@ export function getInflight(
 const SINGLEFLIGHT_TIMEOUT_MS = 15_000;
 
 export function setInflight(mint: string, p: Promise<TokenCheckResult>): void {
-  const timeout = new Promise<TokenCheckResult>((_, reject) =>
-    setTimeout(() => {
-      inflight.delete(mint);
-      reject(new Error("Analysis timed out"));
-    }, SINGLEFLIGHT_TIMEOUT_MS),
+  const timer = setTimeout(
+    () => inflight.delete(mint),
+    SINGLEFLIGHT_TIMEOUT_MS,
   );
-  const race = Promise.race([p, timeout]);
-  inflight.set(mint, race);
-  p.finally(() => inflight.delete(mint));
+  const guarded = p.finally(() => {
+    clearTimeout(timer);
+    inflight.delete(mint);
+  });
+  // Prevent unhandled rejection on the stored promise — callers re-await and handle errors
+  guarded.catch(() => {});
+  inflight.set(mint, guarded);
 }
 
 // === Negative cache (error-aware TTL) ===
