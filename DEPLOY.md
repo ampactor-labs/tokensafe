@@ -19,7 +19,7 @@
 npm install && npm test && npx tsc --noEmit
 ```
 
-344 tests pass (73 risk-score + 56 checks + 27 delta + 20 liquidity + 100 integration + 10 webhook + 10 jupiter + 5 response-signer + 18 api-keys + 16 policy-engine + 9 audit-db). Tests mock x402 and RPC — no network or wallet needed.
+369 tests pass (73 risk-score + 56 checks + 27 delta + 20 liquidity + 114 integration + 11 audit-report + 10 webhook + 10 jupiter + 5 response-signer + 18 api-keys + 16 policy-engine + 9 audit-db). Tests mock x402 and RPC — no network or wallet needed.
 
 ---
 
@@ -90,6 +90,16 @@ curl "http://localhost:3000/v1/check/lite?mint=So1111111111111111111111111111111
 
 Should return 200 with `risk_score`, `risk_level`, `summary`, and `full_report` (upsell to paid endpoint).
 
+### Prometheus metrics
+
+Requires `WEBHOOK_ADMIN_BEARER` set in `.env`. If unset, `/metrics` returns 404.
+
+```bash
+curl -H "Authorization: Bearer $WEBHOOK_ADMIN_BEARER" http://localhost:3000/metrics
+```
+
+Returns Prometheus text format with `tokensafe_`-prefixed metrics: HTTP request duration/count, token check counts by tier (x402, api_key, lite, batch, audit), API key request counts, plus Node.js runtime metrics (event loop, GC, memory).
+
 ### Rate limiting
 
 ```bash
@@ -122,7 +132,7 @@ Railway injects `PORT` automatically — don't set it. Other optional vars and t
 | `FACILITATOR_URL` | `https://facilitator.payai.network` | PayAI Solana facilitator |
 | `RATE_LIMIT_PER_MINUTE` | `60` | Per-IP limit for health + paid endpoints |
 | `LITE_RATE_LIMIT_PER_MINUTE` | `10` | Per-IP limit for free lite endpoint |
-| `WEBHOOK_ADMIN_BEARER` | (unset) | Bearer token for webhook + API key admin routes |
+| `WEBHOOK_ADMIN_BEARER` | (unset) | Bearer token for webhook + API key admin routes + GET /metrics |
 | `PRO_MONTHLY_LIMIT` | `6000` | Monthly check limit for Pro API keys |
 | `PRO_RATE_LIMIT` | `200` | Requests/min for Pro API keys |
 | `ENTERPRISE_RATE_LIMIT` | `600` | Requests/min for Enterprise API keys |
@@ -332,7 +342,7 @@ Submit manually at [x402scan](https://x402scan.com) for inclusion. No automatic 
 | `npm run dev` | `tsx watch src/index.ts` | Dev server with hot reload + pino-pretty logs |
 | `npm run build` | `tsc` | Compile to `dist/` |
 | `npm start` | `node dist/index.js` | Production server |
-| `npm test` | `vitest run` | 344 tests (mocked, no network) |
+| `npm test` | `vitest run` | 369 tests across 12 files (mocked, no network) |
 | `npm run test:smoke` | `tsx scripts/smoke.ts` | Smoke test against running server |
 | `npm run test:x402` | `tsx scripts/x402-client.ts` | x402 paid request test |
 | `npm run wallet:generate` | `tsx scripts/generate-test-wallet.ts` | Generate Solana test keypair |
