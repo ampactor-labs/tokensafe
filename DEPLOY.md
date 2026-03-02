@@ -19,7 +19,7 @@
 npm install && npm test && npx tsc --noEmit
 ```
 
-304 tests pass (73 risk-score + 56 checks + 27 delta + 20 liquidity + 85 integration + 10 webhook + 10 jupiter + 5 response-signer + 18 api-keys). Tests mock x402 and RPC — no network or wallet needed.
+344 tests pass (73 risk-score + 56 checks + 27 delta + 20 liquidity + 100 integration + 10 webhook + 10 jupiter + 5 response-signer + 18 api-keys + 16 policy-engine + 9 audit-db). Tests mock x402 and RPC — no network or wallet needed.
 
 ---
 
@@ -258,6 +258,10 @@ Without these, no agent finds you. These are machine-readable registrations — 
 | `/v1/check/batch/small` | POST | $0.025 USDC | x402 | Batch check up to 5 tokens |
 | `/v1/check/batch/medium` | POST | $0.08 USDC | x402 | Batch check up to 20 tokens |
 | `/v1/check/batch/large` | POST | $0.15 USDC | x402 | Batch check up to 50 tokens |
+| `/v1/audit/small` | POST | $0.08 USDC | x402 or API key | Treasury audit up to 10 tokens |
+| `/v1/audit/standard` | POST | $0.30 USDC | x402 or API key | Treasury audit up to 50 tokens |
+| `/v1/audit/history` | GET | N/A | API key or Bearer | Audit history |
+| `/v1/audit/:id/report` | GET | N/A | API key or Bearer | Compliance report (markdown) |
 | `/v1/api-keys` | POST/GET/DELETE | N/A | Bearer auth | API key management (CRUD) |
 | `/health` | GET | Free | None | Server status, version, cache stats |
 
@@ -328,7 +332,7 @@ Submit manually at [x402scan](https://x402scan.com) for inclusion. No automatic 
 | `npm run dev` | `tsx watch src/index.ts` | Dev server with hot reload + pino-pretty logs |
 | `npm run build` | `tsc` | Compile to `dist/` |
 | `npm start` | `node dist/index.js` | Production server |
-| `npm test` | `vitest run` | 304 tests (mocked, no network) |
+| `npm test` | `vitest run` | 344 tests (mocked, no network) |
 | `npm run test:smoke` | `tsx scripts/smoke.ts` | Smoke test against running server |
 | `npm run test:x402` | `tsx scripts/x402-client.ts` | x402 paid request test |
 | `npm run wallet:generate` | `tsx scripts/generate-test-wallet.ts` | Generate Solana test keypair |

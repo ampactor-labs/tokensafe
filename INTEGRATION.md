@@ -252,6 +252,76 @@ Batch safety analysis with tiered pricing. Requires x402 payment. Send a JSON bo
 
 **Error codes:** `TOO_MANY_MINTS` (400) if array exceeds tier limit. `INVALID_MINT_ADDRESS` (400) if any mint is invalid base58.
 
+### `POST /v1/audit/small` — Treasury Audit, 10 Tokens ($0.08 USDC)
+
+### `POST /v1/audit/standard` — Treasury Audit, 50 Tokens ($0.30 USDC)
+
+Run a policy-evaluated audit on a batch of tokens. Requires x402 payment or API key. Returns per-token results, policy violations, aggregate risk, and a signed attestation.
+
+**Request body:**
+
+```json
+{
+  "mints": ["So111...", "EPjFW..."],
+  "policy": {
+    "name": "my-policy",
+    "rules": [
+      { "id": "no_rug", "field": "risk_score", "operator": "gt", "value": 60, "action": "block", "message": "Too risky" }
+    ]
+  }
+}
+```
+
+`policy` is optional — defaults to the built-in policy (8 rules covering extreme risk, honeypots, authorities, delegate extensions, etc.).
+
+**Response fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `audit_id` | string | UUID for this audit (use to fetch report) |
+| `created_at` | string | ISO 8601 timestamp |
+| `expires_at` | string | Auto-expires after 90 days |
+| `total` | number | Number of mints submitted |
+| `succeeded` | number | Successful analyses |
+| `failed` | number | Failed analyses |
+| `aggregate_risk_score` | number | Average risk score of succeeded tokens |
+| `risk_distribution` | object | `{ LOW: 5, MODERATE: 2, HIGH: 1 }` count per level |
+| `policy_violations` | array | `{ rule_id, action, message, actual_value }` per violation |
+| `attestation` | object | `{ hash, signature, signer_pubkey }` — Ed25519 signed audit hash |
+| `results` | array | Full `TokenCheckResult` per mint, or error objects |
+
+**Pricing:**
+
+| Tier | Max Tokens | Price |
+|------|-----------|-------|
+| `/audit/small` | 10 | $0.08 |
+| `/audit/standard` | 50 | $0.30 |
+
+### `GET /v1/audit/history` — Audit History (API Key or Bearer)
+
+Returns past audit summaries. Requires `X-API-Key` or admin `Authorization: Bearer`.
+
+**Query parameters:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mint` | string | (optional) | Filter by mint address |
+| `from` | string | (optional) | ISO 8601 start date |
+| `to` | string | (optional) | ISO 8601 end date |
+| `limit` | number | 50 | Max results (capped at 100) |
+
+**Response:** Array of `{ id, created_at, expires_at, token_count, aggregate_risk_score, violation_count }`.
+
+### `GET /v1/audit/:id/report` — Compliance Report (API Key or Bearer)
+
+Returns a markdown compliance report for a specific audit.
+
+**Response:** `Content-Type: text/markdown; charset=utf-8`. Report includes executive summary, risk distribution, policy violations, per-token details, and attestation.
+
+```bash
+curl -H "X-API-Key: tks_..." https://tokensafe-production.up.railway.app/v1/audit/<AUDIT_ID>/report
+```
+
 ### `GET /health` — Server Status (Free)
 
 Returns server status, version, uptime, cache stats, `signer_pubkey` for response signature verification, `facilitator_url`, and available API versions.
@@ -296,6 +366,7 @@ Returns x402 discovery metadata for automated service registration. Includes ava
 | `INVALID_API_KEY` | 401 | API key not found or revoked |
 | `API_KEY_EXPIRED` | 401 | API key past its expiration date |
 | `API_KEY_LIMIT_EXCEEDED` | 429 | Monthly usage limit reached for API key tier |
+| `AUDIT_NOT_FOUND` | 404 | Audit ID not found or expired |
 | `INTERNAL_ERROR` | 500 | Unexpected server error |
 
 All errors return structured JSON: `{ "error": { "code": "...", "message": "...", "details": "..." } }`

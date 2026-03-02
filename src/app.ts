@@ -28,8 +28,24 @@ import { x402Middleware } from "./x402/middleware.js";
 import { checkToken, checkTokenLite } from "./analysis/token-checker.js";
 import { cacheStats } from "./utils/cache.js";
 import { rateLimiter } from "./utils/rate-limit.js";
-import { getSignerPubkey } from "./utils/response-signer.js";
+import {
+  getSignerPubkey,
+  hashAuditResults,
+  signAuditAttestation,
+} from "./utils/response-signer.js";
 import { createMcpServer } from "./mcp/server.js";
+import {
+  evaluatePolicy,
+  DEFAULT_POLICY,
+  type Policy,
+} from "./analysis/policy-engine.js";
+import {
+  saveAuditResult,
+  getAuditResult,
+  listAuditHistory,
+  pruneExpiredAudits,
+} from "./utils/audit-db.js";
+import { generateMarkdownReport } from "./utils/audit-report.js";
 
 export const app = express();
 app.set("trust proxy", 1);
@@ -127,6 +143,10 @@ app.get("/.well-known/x402", (_req, res) => {
       "| `POST /v1/check/batch/small` | $0.025 (up to 5) | Batch safety check |",
       "| `POST /v1/check/batch/medium` | $0.08 (up to 20) | Batch safety check |",
       "| `POST /v1/check/batch/large` | $0.15 (up to 50) | Batch safety check |",
+      "| `POST /v1/audit/small` | $0.08 USDC (up to 10) | Treasury audit with policy evaluation |",
+      "| `POST /v1/audit/standard` | $0.30 USDC (up to 50) | Treasury audit with policy evaluation |",
+      "| `GET /v1/audit/history` | API key or Bearer | Audit history |",
+      "| `GET /v1/audit/:id/report` | API key or Bearer | Compliance report (markdown) |",
       "| `POST /v1/webhooks` | Bearer auth | Webhook subscription management (CRUD) |",
       "| `POST /v1/api-keys` | Bearer auth | API key management (CRUD) |",
       "| `GET /health` | Free | Server status |",
@@ -177,6 +197,10 @@ app.get("/health", healthRateLimiter, (_req, res) => {
           "/v1/check/batch/small",
           "/v1/check/batch/medium",
           "/v1/check/batch/large",
+          "/v1/audit/small",
+          "/v1/audit/standard",
+          "/v1/audit/history",
+          "/v1/audit/:id/report",
           "/v1/webhooks",
           "/v1/api-keys",
         ],
@@ -627,6 +651,91 @@ app.delete(
   },
 );
 
+// 4e. Audit history + report — API key or admin bearer, before x402 gate
+
+function auditReadAuth(
+  req: express.Request,
+  _res: express.Response,
+  next: express.NextFunction,
+) {
+  // Check X-API-Key first
+  const apiKey = req.headers["x-api-key"] as string | undefined;
+  if (apiKey) {
+    const record = validateApiKey(apiKey);
+    if (record && record.active) {
+      (req as any).apiKeyRecord = record;
+      return next();
+    }
+  }
+  // Fall back to admin bearer
+  if (
+    config.webhookAdminBearer &&
+    req.headers.authorization === `Bearer ${config.webhookAdminBearer}`
+  ) {
+    return next();
+  }
+  throw new ApiError("UNAUTHORIZED", "Valid API key or admin bearer required");
+}
+
+app.get(
+  "/v1/audit/history",
+  auditReadAuth,
+  (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    try {
+      const mint = req.query.mint as string | undefined;
+      const from = req.query.from as string | undefined;
+      const to = req.query.to as string | undefined;
+      const limit = req.query.limit
+        ? parseInt(req.query.limit as string, 10)
+        : 50;
+
+      const record = (req as any).apiKeyRecord as ApiKeyRecord | undefined;
+
+      const rows = listAuditHistory({
+        apiKeyId: record?.id,
+        mint: mint || undefined,
+        from: from || undefined,
+        to: to || undefined,
+        limit: Math.min(limit, 100),
+      });
+
+      res.json(
+        rows.map((r) => ({
+          id: r.id,
+          created_at: r.created_at,
+          expires_at: r.expires_at,
+          token_count: (JSON.parse(r.mints_json) as string[]).length,
+          aggregate_risk_score: r.aggregate_risk_score,
+          violation_count: (JSON.parse(r.violations_json) as unknown[]).length,
+        })),
+      );
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+app.get(
+  "/v1/audit/:id/report",
+  auditReadAuth,
+  (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    try {
+      const rawId = Array.isArray(req.params.id)
+        ? req.params.id[0]
+        : req.params.id;
+      const row = getAuditResult(rawId);
+      if (!row) {
+        throw new ApiError("AUDIT_NOT_FOUND", `Audit ${rawId} not found`);
+      }
+      const markdown = generateMarkdownReport(row);
+      res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+      res.send(markdown);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // 5. API key middleware — validates X-API-Key header, sets req.apiKeyRecord
 app.use(
   (
@@ -787,6 +896,162 @@ const jsonParser = express.json();
 app.post("/v1/check/batch/small", jsonParser, batchHandler(5));
 app.post("/v1/check/batch/medium", jsonParser, batchHandler(20));
 app.post("/v1/check/batch/large", jsonParser, batchHandler(50));
+
+// 7b. Audit endpoint — gated by x402 or API key, tiered pricing
+function auditHandler(maxTokens: number) {
+  return async (
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    try {
+      const { mints, policy: policyInput } = req.body as {
+        mints?: unknown;
+        policy?: unknown;
+      };
+
+      if (!Array.isArray(mints) || mints.length === 0) {
+        throw new ApiError(
+          "MISSING_REQUIRED_PARAM",
+          "Request body must include a non-empty 'mints' array",
+        );
+      }
+      if (mints.length > maxTokens) {
+        throw new ApiError(
+          "TOO_MANY_MINTS",
+          `This tier supports up to ${maxTokens} mints, got ${mints.length}`,
+        );
+      }
+
+      for (const mint of mints) {
+        if (typeof mint !== "string") {
+          throw new ApiError(
+            "INVALID_MINT_ADDRESS",
+            `Invalid mint address: expected string, got ${typeof mint}`,
+          );
+        }
+        try {
+          new PublicKey(mint);
+        } catch {
+          throw new ApiError(
+            "INVALID_MINT_ADDRESS",
+            `Invalid Solana mint address: ${mint}`,
+          );
+        }
+      }
+
+      const policy: Policy =
+        policyInput &&
+        typeof policyInput === "object" &&
+        Array.isArray((policyInput as Policy).rules)
+          ? (policyInput as Policy)
+          : DEFAULT_POLICY;
+
+      const settled = await Promise.allSettled(
+        mints.map((mint: string) => checkToken(mint)),
+      );
+
+      const results = settled.map((outcome, i) => {
+        if (outcome.status === "fulfilled") {
+          return outcome.value.result;
+        }
+        const err = outcome.reason;
+        return {
+          mint: mints[i],
+          status: "error" as const,
+          error: {
+            code:
+              err instanceof ApiError ? err.code : ("INTERNAL_ERROR" as const),
+            message: err instanceof Error ? err.message : "Unknown error",
+          },
+        };
+      });
+
+      const succeeded = results.filter(
+        (r) => !("status" in r && r.status === "error"),
+      );
+      const failedCount = results.length - succeeded.length;
+
+      // Evaluate policy against each succeeded result
+      const allViolations = succeeded.flatMap((r) => evaluatePolicy(r, policy));
+
+      // Aggregate risk score (average of succeeded)
+      const aggregateRisk =
+        succeeded.length > 0
+          ? succeeded.reduce(
+              (sum, r) => sum + ((r as { risk_score: number }).risk_score ?? 0),
+              0,
+            ) / succeeded.length
+          : 0;
+
+      // Risk distribution
+      const riskDist: Record<string, number> = {};
+      for (const r of succeeded) {
+        const level = (r as { risk_level: string }).risk_level;
+        if (level) riskDist[level] = (riskDist[level] ?? 0) + 1;
+      }
+
+      const createdAt = new Date().toISOString();
+      const expiresAt = new Date(
+        Date.now() + 90 * 24 * 60 * 60 * 1000,
+      ).toISOString();
+
+      const attestationHash = hashAuditResults(
+        mints as string[],
+        results,
+        createdAt,
+      );
+      const attestationSignature = signAuditAttestation(attestationHash);
+
+      const auditId = crypto.randomUUID();
+      const record = (req as any).apiKeyRecord as ApiKeyRecord | undefined;
+
+      saveAuditResult({
+        id: auditId,
+        api_key_id: record?.id ?? null,
+        mints_json: JSON.stringify(mints),
+        policy_json: JSON.stringify(policy),
+        results_json: JSON.stringify(results),
+        violations_json: JSON.stringify(allViolations),
+        aggregate_risk_score: Math.round(aggregateRisk * 10) / 10,
+        attestation_hash: attestationHash,
+        attestation_signature: attestationSignature,
+        created_at: createdAt,
+        expires_at: expiresAt,
+      });
+
+      // Lazy prune (non-blocking)
+      try {
+        pruneExpiredAudits();
+      } catch {
+        // Best-effort
+      }
+
+      res.json({
+        audit_id: auditId,
+        created_at: createdAt,
+        expires_at: expiresAt,
+        total: mints.length,
+        succeeded: succeeded.length,
+        failed: failedCount,
+        aggregate_risk_score: Math.round(aggregateRisk * 10) / 10,
+        risk_distribution: riskDist,
+        policy_violations: allViolations,
+        attestation: {
+          hash: attestationHash,
+          signature: attestationSignature,
+          signer_pubkey: getSignerPubkey(),
+        },
+        results,
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+app.post("/v1/audit/small", jsonParser, auditHandler(10));
+app.post("/v1/audit/standard", jsonParser, auditHandler(50));
 
 // 8. Token safety check — gated by x402
 app.get("/v1/check", async (req, res, next) => {

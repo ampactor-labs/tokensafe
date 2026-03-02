@@ -988,10 +988,248 @@ describe("API key CRUD", () => {
   });
 });
 
-describe("health endpoint includes api-keys", () => {
+describe("health endpoint includes api-keys and audit routes", () => {
   it("lists /v1/api-keys in api_versions", async () => {
     const res = await request(app).get("/health");
     expect(res.body.api_versions.v1.endpoints).toContain("/v1/api-keys");
+  });
+
+  it("lists audit routes in api_versions", async () => {
+    const res = await request(app).get("/health");
+    const endpoints = res.body.api_versions.v1.endpoints;
+    expect(endpoints).toContain("/v1/audit/small");
+    expect(endpoints).toContain("/v1/audit/standard");
+    expect(endpoints).toContain("/v1/audit/history");
+    expect(endpoints).toContain("/v1/audit/:id/report");
+  });
+});
+
+describe("POST /v1/audit/*", () => {
+  const AUTH = { Authorization: "Bearer test-webhook-bearer" };
+  let apiKey: string;
+
+  beforeEach(async () => {
+    closeDb();
+    initTestDb();
+    // Create a pro API key
+    const res = await request(app)
+      .post("/v1/api-keys")
+      .set(AUTH)
+      .send({ label: "audit-test", tier: "pro" });
+    apiKey = res.body.key;
+  });
+
+  it("POST /v1/audit/small with API key returns audit result", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    const res = await request(app)
+      .post("/v1/audit/small")
+      .set("X-API-Key", apiKey)
+      .send({ mints: [WSOL] });
+    expect(res.status).toBe(200);
+    expect(res.body.audit_id).toBeDefined();
+    expect(res.body.total).toBe(1);
+    expect(res.body.succeeded).toBe(1);
+    expect(res.body.failed).toBe(0);
+    expect(res.body.aggregate_risk_score).toBeDefined();
+    expect(res.body.risk_distribution).toBeDefined();
+    expect(res.body.results).toHaveLength(1);
+  });
+
+  it("validates mints (rejects empty array)", async () => {
+    const res = await request(app)
+      .post("/v1/audit/small")
+      .set("X-API-Key", apiKey)
+      .send({ mints: [] });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("MISSING_REQUIRED_PARAM");
+  });
+
+  it("enforces max 10 tokens for small tier", async () => {
+    const mints = Array(11).fill(WSOL);
+    const res = await request(app)
+      .post("/v1/audit/small")
+      .set("X-API-Key", apiKey)
+      .send({ mints });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("TOO_MANY_MINTS");
+  });
+
+  it("enforces max 50 tokens for standard tier", async () => {
+    const mints = Array(51).fill(WSOL);
+    const res = await request(app)
+      .post("/v1/audit/standard")
+      .set("X-API-Key", apiKey)
+      .send({ mints });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("TOO_MANY_MINTS");
+  });
+
+  it("includes attestation (hash, signature, signer_pubkey)", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    const res = await request(app)
+      .post("/v1/audit/small")
+      .set("X-API-Key", apiKey)
+      .send({ mints: [WSOL] });
+    expect(res.body.attestation).toBeDefined();
+    expect(typeof res.body.attestation.hash).toBe("string");
+    expect(typeof res.body.attestation.signature).toBe("string");
+    expect(typeof res.body.attestation.signer_pubkey).toBe("string");
+  });
+
+  it("includes policy_violations array", async () => {
+    mockCheckToken.mockResolvedValue(makeResult({ risk_score: 85 }));
+    const res = await request(app)
+      .post("/v1/audit/small")
+      .set("X-API-Key", apiKey)
+      .send({ mints: [WSOL] });
+    expect(Array.isArray(res.body.policy_violations)).toBe(true);
+    // Score 85 should trigger extreme_risk
+    const extreme = res.body.policy_violations.find(
+      (v: any) => v.rule_id === "extreme_risk",
+    );
+    expect(extreme).toBeDefined();
+    expect(extreme.action).toBe("block");
+  });
+
+  it("accepts custom policy", async () => {
+    mockCheckToken.mockResolvedValue(makeResult({ risk_score: 15 }));
+    const customPolicy = {
+      name: "strict",
+      rules: [
+        {
+          id: "strict_risk",
+          field: "risk_score",
+          operator: "gt",
+          value: 10,
+          action: "block",
+          message: "Too risky",
+        },
+      ],
+    };
+    const res = await request(app)
+      .post("/v1/audit/small")
+      .set("X-API-Key", apiKey)
+      .send({ mints: [WSOL], policy: customPolicy });
+    expect(res.status).toBe(200);
+    expect(res.body.policy_violations).toHaveLength(1);
+    expect(res.body.policy_violations[0].rule_id).toBe("strict_risk");
+  });
+
+  it("handles all-failing mints with succeeded=0", async () => {
+    const { ApiError } = await import("../src/utils/errors.js");
+    mockCheckToken.mockRejectedValue(
+      new ApiError("TOKEN_NOT_FOUND", "Token not found"),
+    );
+    const res = await request(app)
+      .post("/v1/audit/small")
+      .set("X-API-Key", apiKey)
+      .send({ mints: [WSOL] });
+    expect(res.status).toBe(200);
+    expect(res.body.succeeded).toBe(0);
+    expect(res.body.failed).toBe(1);
+    expect(res.body.aggregate_risk_score).toBe(0);
+  });
+});
+
+describe("GET /v1/audit/history", () => {
+  const AUTH = { Authorization: "Bearer test-webhook-bearer" };
+  let apiKey: string;
+
+  beforeEach(async () => {
+    closeDb();
+    initTestDb();
+    const res = await request(app)
+      .post("/v1/api-keys")
+      .set(AUTH)
+      .send({ label: "history-test", tier: "pro" });
+    apiKey = res.body.key;
+  });
+
+  it("requires auth (401 without)", async () => {
+    const res = await request(app).get("/v1/audit/history");
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe("UNAUTHORIZED");
+  });
+
+  it("returns audit summaries", async () => {
+    // Create an audit first
+    mockCheckToken.mockResolvedValue(makeResult());
+    await request(app)
+      .post("/v1/audit/small")
+      .set("X-API-Key", apiKey)
+      .send({ mints: [WSOL] });
+
+    const res = await request(app)
+      .get("/v1/audit/history")
+      .set("X-API-Key", apiKey);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0].id).toBeDefined();
+    expect(res.body[0].token_count).toBe(1);
+    expect(res.body[0].aggregate_risk_score).toBeDefined();
+    expect(res.body[0].violation_count).toBeDefined();
+  });
+
+  it("filters by date range", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    await request(app)
+      .post("/v1/audit/small")
+      .set("X-API-Key", apiKey)
+      .send({ mints: [WSOL] });
+
+    // Future date range should return nothing
+    const res = await request(app)
+      .get("/v1/audit/history?from=2030-01-01T00:00:00Z")
+      .set("X-API-Key", apiKey);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(0);
+  });
+
+  it("works with admin bearer auth too", async () => {
+    const res = await request(app).get("/v1/audit/history").set(AUTH);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+});
+
+describe("GET /v1/audit/:id/report", () => {
+  const AUTH = { Authorization: "Bearer test-webhook-bearer" };
+  let apiKey: string;
+
+  beforeEach(async () => {
+    closeDb();
+    initTestDb();
+    const res = await request(app)
+      .post("/v1/api-keys")
+      .set(AUTH)
+      .send({ label: "report-test", tier: "pro" });
+    apiKey = res.body.key;
+  });
+
+  it("returns text/markdown", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    const auditRes = await request(app)
+      .post("/v1/audit/small")
+      .set("X-API-Key", apiKey)
+      .send({ mints: [WSOL] });
+    const auditId = auditRes.body.audit_id;
+
+    const res = await request(app)
+      .get(`/v1/audit/${auditId}/report`)
+      .set("X-API-Key", apiKey);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/markdown");
+    expect(res.text).toContain("# TokenSafe Compliance Report");
+    expect(res.text).toContain(auditId);
+  });
+
+  it("returns 404 for non-existent audit", async () => {
+    const res = await request(app)
+      .get("/v1/audit/nonexistent-uuid/report")
+      .set("X-API-Key", apiKey);
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe("AUDIT_NOT_FOUND");
   });
 });
 

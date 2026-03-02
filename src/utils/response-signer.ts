@@ -50,3 +50,18 @@ export function getSignerPubkey(): string {
   const rawKey = (spki as Buffer).subarray(12);
   return rawKey.toString("hex");
 }
+
+export function hashAuditResults(
+  mints: string[],
+  results: unknown[],
+  timestamp: string,
+): string {
+  const canonical = JSON.stringify({ mints, results, timestamp });
+  return crypto.createHash("sha256").update(canonical).digest("hex");
+}
+
+export function signAuditAttestation(hash: string): string {
+  const hashBytes = Buffer.from(hash, "hex");
+  const signature = crypto.sign(null, hashBytes, privateKey);
+  return signature.toString("hex");
+}

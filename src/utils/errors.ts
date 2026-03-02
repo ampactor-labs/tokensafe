@@ -11,6 +11,7 @@ export type ErrorCode =
   | "INVALID_API_KEY"
   | "API_KEY_EXPIRED"
   | "API_KEY_LIMIT_EXCEEDED"
+  | "AUDIT_NOT_FOUND"
   | "INTERNAL_ERROR";
 
 const STATUS_MAP: Record<ErrorCode, number> = {
@@ -26,6 +27,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   INVALID_API_KEY: 401,
   API_KEY_EXPIRED: 401,
   API_KEY_LIMIT_EXCEEDED: 429,
+  AUDIT_NOT_FOUND: 404,
   INTERNAL_ERROR: 500,
 };
 
