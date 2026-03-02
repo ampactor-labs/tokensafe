@@ -462,6 +462,68 @@ async function main() {
     );
   });
 
+  // --- Cache behavior ---
+  console.log("\nCache behavior:");
+
+  await check("Second lite call within 5min returns X-Cache: HIT", async () => {
+    // First call primes the cache
+    await fetch(`${BASE}/v1/check/lite?mint=${WSOL}`);
+    // Second call should hit
+    const res = await fetch(`${BASE}/v1/check/lite?mint=${WSOL}`);
+    const cache = res.headers.get("x-cache");
+    assert(cache === "HIT", `expected X-Cache: HIT, got ${cache}`);
+  });
+
+  // --- Rate limiting ---
+  console.log("\nRate limiting:");
+
+  await check("Rate limit headers present on lite", async () => {
+    const res = await fetch(`${BASE}/v1/check/lite?mint=${WSOL}`);
+    assert(
+      res.headers.get("x-ratelimit-limit") !== null,
+      "missing x-ratelimit-limit on lite",
+    );
+    assert(
+      res.headers.get("x-ratelimit-remaining") !== null,
+      "missing x-ratelimit-remaining on lite",
+    );
+  });
+
+  // --- Batch x402 gate ---
+  console.log("\nBatch endpoints:");
+
+  await check("POST /v1/check/batch/medium → 402 with x402 gate", async () => {
+    const res = await fetch(`${BASE}/v1/check/batch/medium`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mints: [WSOL] }),
+    });
+    assert(res.status === 402, `expected 402, got ${res.status}`);
+  });
+
+  await check("POST /v1/check/batch/large → 402 with x402 gate", async () => {
+    const res = await fetch(`${BASE}/v1/check/batch/large`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mints: [WSOL] }),
+    });
+    assert(res.status === 402, `expected 402, got ${res.status}`);
+  });
+
+  // --- Discovery doc structure ---
+  console.log("\nDiscovery doc:");
+
+  await check("/.well-known/x402 has instructions and resources", async () => {
+    const res = await fetch(`${BASE}/.well-known/x402`);
+    const body = await res.json();
+    assert(typeof body.instructions === "string", "missing instructions");
+    assert(
+      body.instructions.includes("TokenSafe"),
+      "instructions missing product name",
+    );
+    assert(body.version === 1, `expected version=1, got ${body.version}`);
+  });
+
   // --- Summary ---
   console.log(`\n${passed} passed, ${failed} failed\n`);
   process.exit(failed > 0 ? 1 : 0);

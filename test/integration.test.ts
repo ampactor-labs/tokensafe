@@ -1250,3 +1250,100 @@ describe("404 handler", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("Batch endpoints", () => {
+  it("POST /v1/check/batch/small validates mints array", async () => {
+    const res = await request(app)
+      .post("/v1/check/batch/small")
+      .send({ mints: [] });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("MISSING_REQUIRED_PARAM");
+  });
+
+  it("POST /v1/check/batch/small rejects non-array mints", async () => {
+    const res = await request(app)
+      .post("/v1/check/batch/small")
+      .send({ mints: "not-an-array" });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("MISSING_REQUIRED_PARAM");
+  });
+
+  it("POST /v1/check/batch/small rejects invalid mint address", async () => {
+    const res = await request(app)
+      .post("/v1/check/batch/small")
+      .send({ mints: ["not-base58!!!"] });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_MINT_ADDRESS");
+  });
+
+  it("POST /v1/check/batch/small enforces max 5 tokens", async () => {
+    const mints = Array(6).fill(WSOL);
+    const res = await request(app)
+      .post("/v1/check/batch/small")
+      .send({ mints });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("TOO_MANY_MINTS");
+  });
+
+  it("POST /v1/check/batch/medium enforces max 20 tokens", async () => {
+    const mints = Array(21).fill(WSOL);
+    const res = await request(app)
+      .post("/v1/check/batch/medium")
+      .send({ mints });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("TOO_MANY_MINTS");
+  });
+
+  it("POST /v1/check/batch/large enforces max 50 tokens", async () => {
+    const mints = Array(51).fill(WSOL);
+    const res = await request(app)
+      .post("/v1/check/batch/large")
+      .send({ mints });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("TOO_MANY_MINTS");
+  });
+
+  it("POST /v1/check/batch/small returns results on success", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    const res = await request(app)
+      .post("/v1/check/batch/small")
+      .send({ mints: [WSOL] });
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(1);
+    expect(res.body.succeeded).toBe(1);
+    expect(res.body.failed).toBe(0);
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].mint).toBe(WSOL);
+    expect(res.body.checked_at).toBeDefined();
+  });
+
+  it("POST /v1/check/batch/small handles partial failures", async () => {
+    const { ApiError } = await import("../src/utils/errors.js");
+    mockCheckToken
+      .mockResolvedValueOnce(makeResult())
+      .mockRejectedValueOnce(
+        new ApiError("TOKEN_NOT_FOUND", "Token not found"),
+      );
+    const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    const res = await request(app)
+      .post("/v1/check/batch/small")
+      .send({ mints: [WSOL, USDC] });
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(2);
+    expect(res.body.succeeded).toBe(1);
+    expect(res.body.failed).toBe(1);
+    const errorResult = res.body.results.find((r: any) => r.status === "error");
+    expect(errorResult).toBeDefined();
+    expect(errorResult.error.code).toBe("TOKEN_NOT_FOUND");
+  });
+
+  it("POST /v1/check/batch/small allows exactly 5 tokens", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    const mints = Array(5).fill(WSOL);
+    const res = await request(app)
+      .post("/v1/check/batch/small")
+      .send({ mints });
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(5);
+  });
+});

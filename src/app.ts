@@ -2,11 +2,11 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
-import { PublicKey } from "@solana/web3.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { config } from "./config.js";
 import { logger } from "./utils/logger.js";
 import { ApiError } from "./utils/errors.js";
+import { validateMint } from "./utils/validation.js";
 import {
   createSubscription,
   listSubscriptions,
@@ -23,7 +23,6 @@ import {
   revokeApiKey,
   getApiKeyUsage,
 } from "./utils/api-keys.js";
-import type { ApiKeyRecord } from "./utils/api-keys.js";
 import { x402Middleware } from "./x402/middleware.js";
 import { checkToken, checkTokenLite } from "./analysis/token-checker.js";
 import { cacheStats } from "./utils/cache.js";
@@ -64,8 +63,8 @@ const liteRateLimiter = rateLimiter(config.liteRateLimitPerMinute);
 
 // 1. Request ID — top of stack
 app.use((req, res, next) => {
-  (req as any).id = crypto.randomUUID();
-  res.setHeader("X-Request-ID", (req as any).id);
+  req.id = crypto.randomUUID();
+  res.setHeader("X-Request-ID", req.id);
   next();
 });
 
@@ -92,7 +91,7 @@ app.use((req, res, next) => {
         method: req.method,
         path: req.path,
         query: req.query,
-        requestId: (req as any).id,
+        requestId: req.id,
         status: res.statusCode,
         latencyMs,
         ip: req.ip,
@@ -219,16 +218,7 @@ app.get("/v1/check/lite", liteRateLimiter, async (req, res, next) => {
         "Missing required query parameter: mint",
       );
     }
-
-    // Validate base58 early so garbage requests never touch the analysis pipeline
-    try {
-      new PublicKey(mint);
-    } catch {
-      throw new ApiError(
-        "INVALID_MINT_ADDRESS",
-        `Invalid Solana mint address: ${mint}`,
-      );
-    }
+    validateMint(mint);
 
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const { result, fromCache } = await checkTokenLite(mint, baseUrl);
@@ -255,15 +245,7 @@ app.get("/v1/decide", liteRateLimiter, async (req, res, next) => {
         "Missing required query parameter: mint",
       );
     }
-
-    try {
-      new PublicKey(mint);
-    } catch {
-      throw new ApiError(
-        "INVALID_MINT_ADDRESS",
-        `Invalid Solana mint address: ${mint}`,
-      );
-    }
+    validateMint(mint);
 
     const threshold = Math.max(
       0,
@@ -312,8 +294,12 @@ function webhookAuth(
   if (!config.webhookAdminBearer) {
     throw new ApiError("UNAUTHORIZED", "Webhook admin not configured");
   }
-  const hdr = req.headers.authorization;
-  if (!hdr || hdr !== `Bearer ${config.webhookAdminBearer}`) {
+  const hdr = req.headers.authorization ?? "";
+  const expected = `Bearer ${config.webhookAdminBearer}`;
+  const match =
+    hdr.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(hdr), Buffer.from(expected));
+  if (!match) {
     throw new ApiError("UNAUTHORIZED", "Invalid or missing bearer");
   }
   next();
@@ -327,7 +313,7 @@ function redactHmac(full: string): string {
   return "***" + full.slice(-8);
 }
 
-const webhookJsonParser = express.json();
+const webhookJsonParser = express.json({ limit: "16kb" });
 
 app.post(
   "/v1/webhooks",
@@ -356,20 +342,7 @@ app.post(
       }
 
       for (const mint of mints) {
-        if (typeof mint !== "string") {
-          throw new ApiError(
-            "INVALID_MINT_ADDRESS",
-            `Invalid mint address: expected string, got ${typeof mint}`,
-          );
-        }
-        try {
-          new PublicKey(mint);
-        } catch {
-          throw new ApiError(
-            "INVALID_MINT_ADDRESS",
-            `Invalid Solana mint address: ${mint}`,
-          );
-        }
+        validateMint(mint);
       }
 
       const thresholdNum = threshold !== undefined ? Number(threshold) : 50;
@@ -474,20 +447,7 @@ app.patch(
           );
         }
         for (const mint of mints) {
-          if (typeof mint !== "string") {
-            throw new ApiError(
-              "INVALID_MINT_ADDRESS",
-              `Invalid mint address: expected string, got ${typeof mint}`,
-            );
-          }
-          try {
-            new PublicKey(mint);
-          } catch {
-            throw new ApiError(
-              "INVALID_MINT_ADDRESS",
-              `Invalid Solana mint address: ${mint}`,
-            );
-          }
+          validateMint(mint);
         }
         updates.mints = mints as string[];
       }
@@ -548,7 +508,7 @@ app.delete(
 );
 
 // 4d. API key CRUD — bearer-gated, same admin auth as webhooks
-const apiKeyJsonParser = express.json();
+const apiKeyJsonParser = express.json({ limit: "16kb" });
 
 app.post(
   "/v1/api-keys",
@@ -663,16 +623,20 @@ function auditReadAuth(
   if (apiKey) {
     const record = validateApiKey(apiKey);
     if (record && record.active) {
-      (req as any).apiKeyRecord = record;
+      req.apiKeyRecord = record;
       return next();
     }
   }
-  // Fall back to admin bearer
-  if (
-    config.webhookAdminBearer &&
-    req.headers.authorization === `Bearer ${config.webhookAdminBearer}`
-  ) {
-    return next();
+  // Fall back to admin bearer (timing-safe comparison)
+  if (config.webhookAdminBearer) {
+    const hdr = req.headers.authorization ?? "";
+    const expected = `Bearer ${config.webhookAdminBearer}`;
+    if (
+      hdr.length === expected.length &&
+      crypto.timingSafeEqual(Buffer.from(hdr), Buffer.from(expected))
+    ) {
+      return next();
+    }
   }
   throw new ApiError("UNAUTHORIZED", "Valid API key or admin bearer required");
 }
@@ -683,13 +647,14 @@ app.get(
   (req: express.Request, res: express.Response, next: express.NextFunction) => {
     try {
       const mint = req.query.mint as string | undefined;
+      if (mint) validateMint(mint);
       const from = req.query.from as string | undefined;
       const to = req.query.to as string | undefined;
       const limit = req.query.limit
         ? parseInt(req.query.limit as string, 10)
         : 50;
 
-      const record = (req as any).apiKeyRecord as ApiKeyRecord | undefined;
+      const record = req.apiKeyRecord;
 
       const rows = listAuditHistory({
         apiKeyId: record?.id,
@@ -724,8 +689,11 @@ app.get(
         ? req.params.id[0]
         : req.params.id;
       const row = getAuditResult(rawId);
-      if (!row) {
-        throw new ApiError("AUDIT_NOT_FOUND", `Audit ${rawId} not found`);
+      if (!row || new Date(row.expires_at) < new Date()) {
+        throw new ApiError(
+          "AUDIT_NOT_FOUND",
+          `Audit ${rawId} not found or expired`,
+        );
       }
       const markdown = generateMarkdownReport(row);
       res.setHeader("Content-Type", "text/markdown; charset=utf-8");
@@ -770,7 +738,7 @@ app.use(
       );
     }
 
-    (req as any).apiKeyRecord = record;
+    req.apiKeyRecord = record;
     next();
   },
 );
@@ -778,7 +746,7 @@ app.use(
 // 5b. x402 payment gate — skipped if API key is present
 app.use(
   (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if ((req as any).apiKeyRecord) return next();
+    if (req.apiKeyRecord) return next();
     return x402Middleware(req, res, next);
   },
 );
@@ -786,7 +754,7 @@ app.use(
 // 5c. Post-auth: increment API key usage + set response headers
 app.use(
   (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const record = (req as any).apiKeyRecord as ApiKeyRecord | undefined;
+    const record = req.apiKeyRecord;
     if (record) {
       incrementUsage(record.id);
       const usage = checkUsageLimit(record.id);
@@ -810,7 +778,7 @@ app.use(
 // 6. Rate limiter for paid routes (independent bucket from health) — only for non-API-key requests
 app.use(
   (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if ((req as any).apiKeyRecord) return next(); // API key has its own rate limiter
+    if (req.apiKeyRecord) return next(); // API key has its own rate limiter
     return paidRateLimiter(req, res, next);
   },
 );
@@ -839,20 +807,7 @@ function batchHandler(maxTokens: number) {
 
       // Validate all mints are valid base58 before running any checks
       for (const mint of mints) {
-        if (typeof mint !== "string") {
-          throw new ApiError(
-            "INVALID_MINT_ADDRESS",
-            `Invalid mint address: expected string, got ${typeof mint}`,
-          );
-        }
-        try {
-          new PublicKey(mint);
-        } catch {
-          throw new ApiError(
-            "INVALID_MINT_ADDRESS",
-            `Invalid Solana mint address: ${mint}`,
-          );
-        }
+        validateMint(mint);
       }
 
       const settled = await Promise.allSettled(
@@ -892,10 +847,10 @@ function batchHandler(maxTokens: number) {
   };
 }
 
-const jsonParser = express.json();
-app.post("/v1/check/batch/small", jsonParser, batchHandler(5));
-app.post("/v1/check/batch/medium", jsonParser, batchHandler(20));
-app.post("/v1/check/batch/large", jsonParser, batchHandler(50));
+const batchJsonParser = express.json({ limit: "256kb" });
+app.post("/v1/check/batch/small", batchJsonParser, batchHandler(5));
+app.post("/v1/check/batch/medium", batchJsonParser, batchHandler(20));
+app.post("/v1/check/batch/large", batchJsonParser, batchHandler(50));
 
 // 7b. Audit endpoint — gated by x402 or API key, tiered pricing
 function auditHandler(maxTokens: number) {
@@ -924,20 +879,7 @@ function auditHandler(maxTokens: number) {
       }
 
       for (const mint of mints) {
-        if (typeof mint !== "string") {
-          throw new ApiError(
-            "INVALID_MINT_ADDRESS",
-            `Invalid mint address: expected string, got ${typeof mint}`,
-          );
-        }
-        try {
-          new PublicKey(mint);
-        } catch {
-          throw new ApiError(
-            "INVALID_MINT_ADDRESS",
-            `Invalid Solana mint address: ${mint}`,
-          );
-        }
+        validateMint(mint);
       }
 
       const policy: Policy =
@@ -1004,7 +946,7 @@ function auditHandler(maxTokens: number) {
       const attestationSignature = signAuditAttestation(attestationHash);
 
       const auditId = crypto.randomUUID();
-      const record = (req as any).apiKeyRecord as ApiKeyRecord | undefined;
+      const record = req.apiKeyRecord;
 
       saveAuditResult({
         id: auditId,
@@ -1050,8 +992,9 @@ function auditHandler(maxTokens: number) {
   };
 }
 
-app.post("/v1/audit/small", jsonParser, auditHandler(10));
-app.post("/v1/audit/standard", jsonParser, auditHandler(50));
+const auditJsonParser = express.json({ limit: "256kb" });
+app.post("/v1/audit/small", auditJsonParser, auditHandler(10));
+app.post("/v1/audit/standard", auditJsonParser, auditHandler(50));
 
 // 8. Token safety check — gated by x402
 app.get("/v1/check", async (req, res, next) => {
