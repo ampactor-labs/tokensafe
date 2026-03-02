@@ -13,6 +13,17 @@ import {
   updateSubscription,
   deleteSubscription,
 } from "./utils/db.js";
+import {
+  createApiKey,
+  validateApiKey,
+  checkUsageLimit,
+  incrementUsage,
+  checkKeyRateLimit,
+  listApiKeys,
+  revokeApiKey,
+  getApiKeyUsage,
+} from "./utils/api-keys.js";
+import type { ApiKeyRecord } from "./utils/api-keys.js";
 import { x402Middleware } from "./x402/middleware.js";
 import { checkToken, checkTokenLite } from "./analysis/token-checker.js";
 import { cacheStats } from "./utils/cache.js";
@@ -117,11 +128,19 @@ app.get("/.well-known/x402", (_req, res) => {
       "| `POST /v1/check/batch/medium` | $0.08 (up to 20) | Batch safety check |",
       "| `POST /v1/check/batch/large` | $0.15 (up to 50) | Batch safety check |",
       "| `POST /v1/webhooks` | Bearer auth | Webhook subscription management (CRUD) |",
+      "| `POST /v1/api-keys` | Bearer auth | API key management (CRUD) |",
       "| `GET /health` | Free | Server status |",
+      "",
+      "## Authentication",
+      "",
+      "- **x402 (default):** Pay $0.008 USDC per request. No API key needed.",
+      "- **API key (subscription):** Include `X-API-Key: tks_...` header to skip x402.",
+      "  Pro ($49/mo): 200 req/min, 6K checks/month. Enterprise ($199/mo): 600 req/min, unlimited.",
       "",
       "## Rate Limits",
       "",
-      "- Paid endpoints: 60 req/min per IP",
+      "- Paid endpoints (x402): 60 req/min per IP",
+      "- Paid endpoints (API key): per-tier rate limit",
       "- Lite endpoint: 10 req/min per IP",
       "- Cached results (< 5min): instant response",
       "",
@@ -159,6 +178,7 @@ app.get("/health", healthRateLimiter, (_req, res) => {
           "/v1/check/batch/medium",
           "/v1/check/batch/large",
           "/v1/webhooks",
+          "/v1/api-keys",
         ],
       },
     },
@@ -503,11 +523,188 @@ app.delete(
   },
 );
 
-// 5. x402 payment gate for paid routes
-app.use(x402Middleware);
+// 4d. API key CRUD — bearer-gated, same admin auth as webhooks
+const apiKeyJsonParser = express.json();
 
-// 6. Rate limiter for paid routes (independent bucket from health)
-app.use(paidRateLimiter);
+app.post(
+  "/v1/api-keys",
+  webhookAuth,
+  apiKeyJsonParser,
+  (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    try {
+      const { label, tier, expires_at } = req.body as {
+        label?: unknown;
+        tier?: unknown;
+        expires_at?: unknown;
+      };
+
+      if (typeof label !== "string" || !label) {
+        throw new ApiError(
+          "MISSING_REQUIRED_PARAM",
+          "label is required and must be a non-empty string",
+        );
+      }
+
+      if (tier !== "pro" && tier !== "enterprise") {
+        throw new ApiError(
+          "MISSING_REQUIRED_PARAM",
+          "tier must be 'pro' or 'enterprise'",
+        );
+      }
+
+      const expiresAt =
+        typeof expires_at === "string" && expires_at ? expires_at : undefined;
+
+      const { fullKey, record } = createApiKey(label, tier, expiresAt);
+
+      res.status(201).json({
+        ...record,
+        key: fullKey,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+app.get(
+  "/v1/api-keys",
+  webhookAuth,
+  (
+    _req: express.Request,
+    res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    try {
+      res.json(listApiKeys());
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+app.get(
+  "/v1/api-keys/:id/usage",
+  webhookAuth,
+  (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    try {
+      const rawId = Array.isArray(req.params.id)
+        ? req.params.id[0]
+        : req.params.id;
+      const id = parseInt(rawId, 10);
+      if (!Number.isFinite(id)) {
+        throw new ApiError("INVALID_API_KEY", "Invalid API key ID");
+      }
+      const usage = getApiKeyUsage(id);
+      const limit = checkUsageLimit(id);
+      res.json({ id, used: limit.used, limit: limit.limit, history: usage });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+app.delete(
+  "/v1/api-keys/:id",
+  webhookAuth,
+  (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    try {
+      const rawId = Array.isArray(req.params.id)
+        ? req.params.id[0]
+        : req.params.id;
+      const id = parseInt(rawId, 10);
+      if (!Number.isFinite(id)) {
+        throw new ApiError("INVALID_API_KEY", "Invalid API key ID");
+      }
+      const revoked = revokeApiKey(id);
+      if (!revoked) {
+        throw new ApiError("INVALID_API_KEY", `API key ${id} not found`);
+      }
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// 5. API key middleware — validates X-API-Key header, sets req.apiKeyRecord
+app.use(
+  (
+    req: express.Request,
+    _res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    const apiKey = req.headers["x-api-key"] as string | undefined;
+    if (!apiKey) return next(); // No key → fall through to x402
+
+    const record = validateApiKey(apiKey);
+    if (!record) {
+      throw new ApiError("INVALID_API_KEY", "Invalid API key");
+    }
+    if (!record.active) {
+      throw new ApiError("INVALID_API_KEY", "API key has been revoked");
+    }
+    if (record.expires_at && new Date(record.expires_at) < new Date()) {
+      throw new ApiError("API_KEY_EXPIRED", "API key has expired");
+    }
+    if (!checkKeyRateLimit(record)) {
+      throw new ApiError(
+        "RATE_LIMITED",
+        `API key rate limit exceeded (${record.rate_limit_per_minute}/min)`,
+      );
+    }
+    const usage = checkUsageLimit(record.id);
+    if (!usage.allowed) {
+      throw new ApiError(
+        "API_KEY_LIMIT_EXCEEDED",
+        `Monthly usage limit reached (${usage.limit} checks/month)`,
+      );
+    }
+
+    (req as any).apiKeyRecord = record;
+    next();
+  },
+);
+
+// 5b. x402 payment gate — skipped if API key is present
+app.use(
+  (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if ((req as any).apiKeyRecord) return next();
+    return x402Middleware(req, res, next);
+  },
+);
+
+// 5c. Post-auth: increment API key usage + set response headers
+app.use(
+  (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const record = (req as any).apiKeyRecord as ApiKeyRecord | undefined;
+    if (record) {
+      incrementUsage(record.id);
+      const usage = checkUsageLimit(record.id);
+      res.setHeader("X-API-Key-Tier", record.tier);
+      res.setHeader(
+        "X-API-Key-Usage",
+        record.monthly_limit === 0
+          ? `${usage.used}/unlimited`
+          : `${usage.used}/${usage.limit}`,
+      );
+      const now = new Date();
+      const resetDate = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
+      );
+      res.setHeader("X-API-Key-Usage-Reset", resetDate.toISOString());
+    }
+    next();
+  },
+);
+
+// 6. Rate limiter for paid routes (independent bucket from health) — only for non-API-key requests
+app.use(
+  (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if ((req as any).apiKeyRecord) return next(); // API key has its own rate limiter
+    return paidRateLimiter(req, res, next);
+  },
+);
 
 // 7. Batch token safety check — gated by x402, tiered pricing
 function batchHandler(maxTokens: number) {

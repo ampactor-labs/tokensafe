@@ -12,7 +12,16 @@
 curl 'https://tokensafe-production.up.railway.app/v1/check/lite?mint=So11111111111111111111111111111111111111112'
 ```
 
-### Paid check (x402 — requires USDC wallet)
+### Paid check with API key (subscription -- no wallet needed)
+
+```bash
+curl -H "X-API-Key: <YOUR_API_KEY>" \
+  'https://tokensafe-production.up.railway.app/v1/check?mint=So11111111111111111111111111111111111111112'
+```
+
+API keys start with `tks_` prefix. Get one from the admin API (see API Key Management below).
+
+### Paid check (x402 -- requires USDC wallet)
 
 ```typescript
 import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
@@ -31,9 +40,18 @@ const data = await res.json();
 // data.risk_score, data.risk_level, data.checks, data.changes, data.alerts
 ```
 
-## How Payment Works
+## Authentication
 
-TokenSafe uses the [x402 protocol](https://github.com/coinbase/x402). No API keys, no accounts. Payment is authentication.
+TokenSafe supports two authentication methods for paid endpoints:
+
+1. **x402 micropayments (default):** Pay $0.008 USDC per request. No accounts needed. Payment is authentication.
+2. **API key (subscription):** Include `X-API-Key` header to skip x402. Pro ($49/mo): 200 req/min, 6K checks/month. Enterprise ($199/mo): 600 req/min, unlimited checks.
+
+Free endpoints (`/v1/check/lite`, `/v1/decide`, `/health`) require neither.
+
+## How x402 Payment Works
+
+TokenSafe uses the [x402 protocol](https://github.com/coinbase/x402) for per-request payments.
 
 1. Agent sends `GET /v1/check?mint=<MINT>` with no auth headers
 2. Server returns `402 Payment Required` with a `PAYMENT-REQUIRED` header
@@ -274,7 +292,10 @@ Returns x402 discovery metadata for automated service registration. Includes ava
 | `INVALID_MINT_ADDRESS` | 400 | Mint address is not valid base58 |
 | `TOKEN_NOT_FOUND` | 404 | Mint account doesn't exist on chain |
 | `RPC_ERROR` | 503 | Solana RPC unavailable — retry later |
-| `RATE_LIMIT_EXCEEDED` | 429 | Too many requests — check `X-RateLimit-Reset` header |
+| `RATE_LIMIT_EXCEEDED` | 429 | Too many requests -- check `X-RateLimit-Reset` header |
+| `INVALID_API_KEY` | 401 | API key not found or revoked |
+| `API_KEY_EXPIRED` | 401 | API key past its expiration date |
+| `API_KEY_LIMIT_EXCEEDED` | 429 | Monthly usage limit reached for API key tier |
 | `INTERNAL_ERROR` | 500 | Unexpected server error |
 
 All errors return structured JSON: `{ "error": { "code": "...", "message": "...", "details": "..." } }`
@@ -397,3 +418,57 @@ Delivery payload:
 ```
 
 Retry policy: 3 attempts max with exponential backoff (1min, 5min, then abandoned).
+
+## API Key Management
+
+Manage subscription API keys. All endpoints require `Authorization: Bearer <WEBHOOK_ADMIN_BEARER>` (same admin token as webhooks).
+
+### Create API Key
+
+```bash
+curl -X POST https://tokensafe-production.up.railway.app/v1/api-keys \
+  -H "Authorization: Bearer $WEBHOOK_ADMIN_BEARER" \
+  -H "Content-Type: application/json" \
+  -d '{"label": "my-trading-bot", "tier": "pro"}'
+```
+
+Returns 201 with the full API key (shown only once -- save it). Tiers: `pro` (6K checks/month, 200 req/min) or `enterprise` (unlimited, 600 req/min).
+
+Optional `expires_at` field (ISO 8601) sets an expiration date.
+
+### List API Keys
+
+```bash
+curl https://tokensafe-production.up.railway.app/v1/api-keys \
+  -H "Authorization: Bearer $WEBHOOK_ADMIN_BEARER"
+```
+
+Returns array of keys with `key_prefix` only (no full key). Includes tier, limits, and active status.
+
+### Get Usage Stats
+
+```bash
+curl https://tokensafe-production.up.railway.app/v1/api-keys/1/usage \
+  -H "Authorization: Bearer $WEBHOOK_ADMIN_BEARER"
+```
+
+Returns current month usage count, monthly limit, and usage history.
+
+### Revoke API Key
+
+```bash
+curl -X DELETE https://tokensafe-production.up.railway.app/v1/api-keys/1 \
+  -H "Authorization: Bearer $WEBHOOK_ADMIN_BEARER"
+```
+
+Returns 204 on success. Revoked keys immediately return 401 on use.
+
+### API Key Response Headers
+
+When using an API key, responses include:
+
+| Header | Example | Description |
+|--------|---------|-------------|
+| `X-API-Key-Tier` | `pro` | Subscription tier |
+| `X-API-Key-Usage` | `1234/6000` | Checks used / monthly limit (`unlimited` for enterprise) |
+| `X-API-Key-Usage-Reset` | `2026-04-01T00:00:00.000Z` | When the monthly counter resets |
