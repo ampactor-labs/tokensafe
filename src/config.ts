@@ -40,4 +40,7 @@ export const config = {
     10,
   ),
   monitorIntervalMs: parseInt(process.env.MONITOR_INTERVAL_MS || "300000", 10),
+  proMonthlyLimit: parseInt(process.env.PRO_MONTHLY_LIMIT || "6000", 10),
+  proRateLimit: parseInt(process.env.PRO_RATE_LIMIT || "200", 10),
+  enterpriseRateLimit: parseInt(process.env.ENTERPRISE_RATE_LIMIT || "600", 10),
 } as const;

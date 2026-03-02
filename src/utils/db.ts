@@ -68,6 +68,28 @@ CREATE INDEX IF NOT EXISTS idx_deliveries_subscription
   ON webhook_deliveries(subscription_id);
 CREATE INDEX IF NOT EXISTS idx_deliveries_status
   ON webhook_deliveries(status, next_retry_at);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key_hash TEXT NOT NULL UNIQUE,
+  key_prefix TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  tier TEXT NOT NULL DEFAULT 'pro',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  monthly_limit INTEGER NOT NULL DEFAULT 6000,
+  rate_limit_per_minute INTEGER NOT NULL DEFAULT 200
+);
+
+CREATE TABLE IF NOT EXISTS api_key_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  api_key_id INTEGER NOT NULL,
+  month TEXT NOT NULL,
+  check_count INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE,
+  UNIQUE(api_key_id, month)
+);
 `;
 
 // ─── Singleton ───────────────────────────────────────────────────────────────
