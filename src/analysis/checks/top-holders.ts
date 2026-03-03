@@ -29,11 +29,13 @@ export async function checkTopHolders(
       new PublicKey(mintAddress),
     );
   } catch (err) {
-    if (err instanceof Error && err.message.includes("Too many accounts")) {
-      // Fallback: Helius DAS getTokenAccounts API
-      return fetchTopHoldersDAS(mintAddress, totalSupplyRaw);
-    }
-    throw err;
+    // Any RPC failure (timeout, rate limit, "Too many accounts", etc.)
+    // → try Helius DAS before giving up
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err), mintAddress },
+      "getTokenLargestAccounts failed, trying DAS fallback",
+    );
+    return fetchTopHoldersDAS(mintAddress, totalSupplyRaw);
   }
 
   const accounts = largestAccounts.value;

@@ -613,13 +613,19 @@ describe("checkTopHolders", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("re-throws non-Too-many-accounts errors", async () => {
+  it("tries DAS fallback on non-Too-many-accounts errors too", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("DAS also down"));
+
     conn.getTokenLargestAccounts.mockRejectedValue(
       new Error("Connection timeout"),
     );
-    await expect(checkTopHolders(MINT, 1000n)).rejects.toThrow(
-      "Connection timeout",
-    );
+    const result = await checkTopHolders(MINT, 1000n);
+    expect(result.status).toBe("UNAVAILABLE");
+    expect(result.risk).toBe("UNKNOWN");
+    expect(result.note).toContain("DAS fallback failed");
+
+    globalThis.fetch = originalFetch;
   });
 });
 
