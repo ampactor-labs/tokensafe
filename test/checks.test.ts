@@ -17,6 +17,11 @@ vi.mock("../src/utils/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// Mock DexScreener — default to null (no fallback data)
+vi.mock("../src/analysis/checks/dexscreener.js", () => ({
+  fetchDexScreenerLiquidity: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock("../src/utils/cache.js", () => ({
   getCached: vi.fn(),
   setCached: vi.fn(),
@@ -559,16 +564,53 @@ describe("checkTopHolders", () => {
     expect(result.top_holders_detail).toBeNull();
   });
 
-  it("returns SAFE with 5M estimate on 'Too many accounts' error", async () => {
+  it("returns UNAVAILABLE/UNKNOWN when 'Too many accounts' and DAS fallback fails", async () => {
     conn.getTokenLargestAccounts.mockRejectedValue(
       new Error("Too many accounts provided; max 500"),
     );
+    // Mock fetch to simulate DAS failure
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("DAS unavailable"));
+
     const result = await checkTopHolders(MINT, 1_000_000_000_000n);
-    expect(result.risk).toBe("SAFE");
-    expect(result.holder_count_estimate).toBe(5_000_000);
-    expect(result.note).toContain("5M+");
+    expect(result.status).toBe("UNAVAILABLE");
+    expect(result.risk).toBe("UNKNOWN");
+    expect(result.holder_count_estimate).toBeNull();
     expect(result.top_10_percentage).toBe(0);
     expect(result.top_1_percentage).toBe(0);
+    expect(result.note).toContain("DAS fallback failed");
+
+    globalThis.fetch = originalFetch;
+  });
+
+  it("uses DAS fallback on 'Too many accounts' error", async () => {
+    conn.getTokenLargestAccounts.mockRejectedValue(
+      new Error("Too many accounts provided; max 500"),
+    );
+    // Mock DAS response with accounts — amounts relative to supply for meaningful percentages
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          result: {
+            token_accounts: [
+              { address: "Holder1111111111111111111111111111111111111", amount: "500000000000" },
+              { address: "Holder2222222222222222222222222222222222222", amount: "200000000000" },
+              { address: "Holder3333333333333333333333333333333333333", amount: "100000000000" },
+            ],
+          },
+        }),
+    });
+
+    const result = await checkTopHolders(MINT, 1_000_000_000_000n);
+    expect(result.status).toBe("OK");
+    expect(result.risk).not.toBe("UNKNOWN");
+    expect(result.top_1_percentage).toBeGreaterThan(0);
+    expect(result.note).toContain("Helius DAS");
+    expect(result.holder_count_estimate).toBeNull();
+
+    globalThis.fetch = originalFetch;
   });
 
   it("re-throws non-Too-many-accounts errors", async () => {
@@ -739,9 +781,9 @@ describe("checkTokenAge", () => {
     expect(result.token_age_minutes).toBeLessThanOrEqual(11);
   });
 
-  it("returns null time fields + established flag for 100-sig token", async () => {
+  it("returns null time fields + established flag for 1000-sig token", async () => {
     const nowSec = Math.floor(Date.now() / 1000);
-    const sigs = Array.from({ length: 100 }, (_, i) => ({
+    const sigs = Array.from({ length: 1000 }, (_, i) => ({
       blockTime: nowSec - i * 60,
     }));
     conn.getSignaturesForAddress.mockResolvedValue(sigs);
@@ -752,8 +794,8 @@ describe("checkTokenAge", () => {
     expect(result.created_at).toBeNull();
   });
 
-  it("returns established=true with null age when oldest 100-sig has no blockTime", async () => {
-    const sigs = Array.from({ length: 100 }, () => ({ blockTime: null }));
+  it("returns established=true with null age when oldest 1000-sig has no blockTime", async () => {
+    const sigs = Array.from({ length: 1000 }, () => ({ blockTime: null }));
     conn.getSignaturesForAddress.mockResolvedValue(sigs);
     const result = await checkTokenAge(MINT);
     expect(result.established).toBe(true);
@@ -761,7 +803,7 @@ describe("checkTokenAge", () => {
     expect(result.created_at).toBeNull();
   });
 
-  it("does not set established flag for < 100 sig tokens", async () => {
+  it("does not set established flag for < 1000 sig tokens", async () => {
     const nowSec = Math.floor(Date.now() / 1000);
     conn.getSignaturesForAddress.mockResolvedValue([
       { blockTime: nowSec },
@@ -949,6 +991,7 @@ function makeFullResult(
       freeze_authority: { status: "RENOUNCED", authority: null, risk: "SAFE" },
       supply: { total: "1000000000", decimals: 9 },
       top_holders: {
+        status: "OK",
         top_10_percentage: 10,
         top_1_percentage: 2,
         holder_count_estimate: 500,
@@ -972,6 +1015,7 @@ function makeFullResult(
     summary: "Low risk",
     degraded: false,
     degraded_checks: [],
+    score_breakdown: {},
     response_signature: "mock-signature",
     signer_pubkey: "mock-pubkey",
     changes: null,

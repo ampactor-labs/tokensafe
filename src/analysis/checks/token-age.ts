@@ -20,7 +20,7 @@ export async function checkTokenAge(
     // If 100 return, the token has >100 txs — established, no age penalty.
     // If <100, we have the complete history and the last sig is creation time.
     const sigPromise = connection.getSignaturesForAddress(mintPubkey, {
-      limit: 100,
+      limit: 1000,
     });
     const sigs = await Promise.race([
       sigPromise,
@@ -37,10 +37,10 @@ export async function checkTokenAge(
       };
     }
 
-    // Established token: 100 sigs returned means >100 txs total.
-    // We don't know actual creation time — oldest of last 100 sigs
+    // Established token: 1000 sigs returned means >1000 txs total.
+    // We don't know actual creation time — oldest of last 1000 sigs
     // could be minutes old for active tokens.
-    if (sigs.length === 100) {
+    if (sigs.length === 1000) {
       return {
         token_age_hours: null,
         token_age_minutes: null,

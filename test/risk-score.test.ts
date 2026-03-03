@@ -686,6 +686,68 @@ describe("computeRiskScore", () => {
     );
     expect(result.risk_score).toBe(0);
   });
+
+  // --- Uncertainty penalties ---
+  it("adds +10 uncertainty for degraded top_holders", () => {
+    const result = computeRiskScore(
+      makeInput({ degradedChecks: ["top_holders"] }),
+    );
+    expect(result.risk_score).toBe(10);
+    expect(result.breakdown.uncertainty_top_holders).toBe(10);
+  });
+
+  it("adds +10 uncertainty for degraded liquidity", () => {
+    const result = computeRiskScore(
+      makeInput({ degradedChecks: ["liquidity"] }),
+    );
+    expect(result.risk_score).toBe(10);
+    expect(result.breakdown.uncertainty_liquidity).toBe(10);
+  });
+
+  it("adds +10 uncertainty for degraded honeypot", () => {
+    const result = computeRiskScore(
+      makeInput({ degradedChecks: ["honeypot"] }),
+    );
+    expect(result.risk_score).toBe(10);
+    expect(result.breakdown.uncertainty_honeypot).toBe(10);
+  });
+
+  it("adds +5 uncertainty for degraded token_age", () => {
+    const result = computeRiskScore(
+      makeInput({ degradedChecks: ["token_age"] }),
+    );
+    expect(result.risk_score).toBe(5);
+    expect(result.breakdown.uncertainty_token_age).toBe(5);
+  });
+
+  it("adds +3 uncertainty for degraded metadata", () => {
+    const result = computeRiskScore(
+      makeInput({ degradedChecks: ["metadata"] }),
+    );
+    expect(result.risk_score).toBe(3);
+    expect(result.breakdown.uncertainty_metadata).toBe(3);
+  });
+
+  it("sums multiple uncertainty penalties", () => {
+    const result = computeRiskScore(
+      makeInput({
+        degradedChecks: ["top_holders", "liquidity", "honeypot", "token_age", "metadata"],
+      }),
+    );
+    // 10 + 10 + 10 + 5 + 3 = 38
+    expect(result.risk_score).toBe(38);
+    expect(result.risk_level).toBe("MODERATE");
+  });
+
+  it("no uncertainty penalty when degradedChecks is empty", () => {
+    const result = computeRiskScore(makeInput({ degradedChecks: [] }));
+    expect(result.risk_score).toBe(0);
+  });
+
+  it("no uncertainty penalty when degradedChecks is undefined", () => {
+    const result = computeRiskScore(makeInput());
+    expect(result.risk_score).toBe(0);
+  });
 });
 
 describe("generateRiskSummary", () => {
@@ -890,5 +952,41 @@ describe("getRiskFactors", () => {
       }),
     );
     expect(factors).toContain("mutable metadata");
+  });
+
+  it("includes uncertainty flags for degraded checks", () => {
+    const factors = getRiskFactors(
+      makeInput({ degradedChecks: ["honeypot", "liquidity"] }),
+    );
+    expect(factors).toContain("honeypot data unavailable — score reflects uncertainty");
+    expect(factors).toContain("liquidity data unavailable — score reflects uncertainty");
+  });
+});
+
+describe("generateRiskSummary with degraded checks", () => {
+  it("returns uncertainty note when all checks degraded and no risk factors", () => {
+    const summary = generateRiskSummary(
+      makeInput({ degradedChecks: ["honeypot", "liquidity"] }),
+    );
+    expect(summary).toContain("2 check(s) unavailable");
+    expect(summary).toContain("honeypot, liquidity");
+    expect(summary).toContain("uncertainty penalties");
+  });
+
+  it("combines real risk factors with uncertainty note", () => {
+    const summary = generateRiskSummary(
+      makeInput({
+        mint: makeMint({ mintAuthority: "A" }),
+        degradedChecks: ["honeypot"],
+      }),
+    );
+    expect(summary).toContain("active mint authority");
+    expect(summary).toContain("1 check(s) unavailable");
+    expect(summary).toContain("honeypot");
+  });
+
+  it("returns 'No risk factors detected' when no degraded and no risk", () => {
+    const summary = generateRiskSummary(makeInput({ degradedChecks: [] }));
+    expect(summary).toBe("No risk factors detected");
   });
 });

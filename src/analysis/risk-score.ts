@@ -16,6 +16,7 @@ export interface RiskScoreInput {
   metadata: MetadataResult | null;
   tokenAge: TokenAgeResult | null;
   honeypot: HoneypotResult | null;
+  degradedChecks?: string[];
 }
 
 export interface RiskScoreResult {
@@ -167,6 +168,21 @@ export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
     }
   }
 
+  // Uncertainty penalties for degraded checks
+  if (input.degradedChecks && input.degradedChecks.length > 0) {
+    const penalties: Record<string, number> = {
+      top_holders: 10,
+      liquidity: 10,
+      honeypot: 10,
+      token_age: 5,
+      metadata: 3,
+    };
+    for (const check of input.degradedChecks) {
+      const pts = penalties[check];
+      if (pts) add(`uncertainty_${check}`, pts);
+    }
+  }
+
   score = Math.min(score, 100);
   const risk_level = scoreToLevel(score);
   return { risk_score: score, risk_level, breakdown };
@@ -234,11 +250,28 @@ export function getRiskFactors(input: RiskScoreInput): string[] {
     flags.push(`${(input.honeypot.sell_tax_bps / 100).toFixed(1)}% sell tax`);
   }
 
+  // Uncertainty flags for degraded checks
+  if (input.degradedChecks) {
+    for (const check of input.degradedChecks) {
+      flags.push(`${check} data unavailable — score reflects uncertainty`);
+    }
+  }
+
   return flags;
 }
 
 export function generateRiskSummary(input: RiskScoreInput): string {
   const flags = getRiskFactors(input);
+
+  // When degraded, separate real risk factors from uncertainty notes
+  const degraded = input.degradedChecks ?? [];
+  if (degraded.length > 0) {
+    const realFlags = flags.filter((f) => !f.includes("data unavailable"));
+    const uncertaintyNote = `Note: ${degraded.length} check(s) unavailable (${degraded.join(", ")}) — score includes uncertainty penalties.`;
+    if (realFlags.length === 0) return uncertaintyNote;
+    return `${realFlags.join(", ")}. ${uncertaintyNote}`;
+  }
+
   if (flags.length === 0) return "No risk factors detected";
   return flags.join(", ");
 }

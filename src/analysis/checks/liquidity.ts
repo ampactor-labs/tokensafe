@@ -2,6 +2,7 @@ import { PublicKey } from "@solana/web3.js";
 import { getConnection } from "../../solana/rpc.js";
 import { logger } from "../../utils/logger.js";
 import type { JupiterQuote } from "./jupiter.js";
+import { fetchDexScreenerLiquidity } from "./dexscreener.js";
 // Note: Jupiter quoting is centralized in jupiter.ts (fetchRoundTrip).
 // checkLiquidity() always receives a pre-fetched quote from the orchestrator.
 
@@ -84,7 +85,26 @@ export async function checkLiquidity(
           priceImpactPct: prefetchedQuote.priceImpactPct,
         }
       : null;
-    if (!jupiter) return noLiquidity();
+    if (!jupiter) {
+      // Fallback: DexScreener (catches CLMM-only pools, Jupiter timeouts/429s)
+      const dex = await fetchDexScreenerLiquidity(mintAddress);
+      if (dex && dex.has_liquidity) {
+        return {
+          has_liquidity: true,
+          primary_pool: dex.primary_pool,
+          pool_address: dex.pool_address,
+          price_impact_pct: null,
+          liquidity_rating: dex.liquidity_rating,
+          lp_locked: null,
+          lp_lock_percentage: null,
+          lp_lock_expiry: null,
+          lp_mint: null,
+          lp_locker: null,
+          risk: dex.liquidity_rating === "SHALLOW" || dex.liquidity_rating === "NONE" ? "WARNING" : "SAFE",
+        };
+      }
+      return noLiquidity();
+    }
 
     const rating = deriveRating(jupiter.priceImpactPct);
 

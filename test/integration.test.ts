@@ -43,6 +43,7 @@ function makeResult(overrides?: Partial<TokenCheckResult>): CheckTokenResponse {
       freeze_authority: { status: "RENOUNCED", authority: null, risk: "SAFE" },
       supply: { total: "999999999", decimals: 9 },
       top_holders: {
+        status: "OK",
         top_10_percentage: 12.5,
         top_1_percentage: 3.2,
         holder_count_estimate: 50000,
@@ -98,6 +99,9 @@ function makeLiteResult(
     risk_level: "LOW",
     summary: "No risk factors detected",
     degraded: false,
+    degraded_checks: [],
+    checks_completed: 6,
+    checks_total: 6,
     is_token_2022: false,
     has_risky_extensions: false,
     can_sell: true,
@@ -455,6 +459,32 @@ describe("GET /v1/check/lite enrichment", () => {
     expect(res.body.rpc_slot).toBeUndefined();
     expect(res.body.response_signature).toBeUndefined();
     expect(res.body.score_breakdown).toBeUndefined();
+  });
+
+  it("includes degraded_checks, checks_completed, checks_total in lite response", async () => {
+    mockCheckTokenLite.mockResolvedValue(
+      makeLiteResult({
+        degraded: true,
+        degraded_checks: ["honeypot", "liquidity"],
+        checks_completed: 4,
+        checks_total: 6,
+      }),
+    );
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.status).toBe(200);
+    expect(res.body.degraded).toBe(true);
+    expect(res.body.degraded_checks).toEqual(["honeypot", "liquidity"]);
+    expect(res.body.checks_completed).toBe(4);
+    expect(res.body.checks_total).toBe(6);
+  });
+
+  it("returns empty degraded_checks and full check count when not degraded", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult());
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.body.degraded).toBe(false);
+    expect(res.body.degraded_checks).toEqual([]);
+    expect(res.body.checks_completed).toBe(6);
+    expect(res.body.checks_total).toBe(6);
   });
 });
 

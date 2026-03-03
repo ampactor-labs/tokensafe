@@ -12,11 +12,17 @@ vi.mock("../src/utils/logger.js", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+// Mock DexScreener — default to null (no fallback data)
+vi.mock("../src/analysis/checks/dexscreener.js", () => ({
+  fetchDexScreenerLiquidity: vi.fn().mockResolvedValue(null),
+}));
+
 import {
   checkLiquidity,
   KNOWN_LOCKERS,
 } from "../src/analysis/checks/liquidity.js";
 import { getConnection } from "../src/solana/rpc.js";
+import { fetchDexScreenerLiquidity } from "../src/analysis/checks/dexscreener.js";
 
 const mockGetConnection = vi.mocked(getConnection);
 
@@ -77,9 +83,41 @@ describe("checkLiquidity", () => {
     expect(result.liquidity_rating).toBeNull();
   });
 
-  it("returns noLiquidity when no quote provided", async () => {
+  it("returns noLiquidity when no quote provided and DexScreener has no data", async () => {
     const result = await checkLiquidity(FAKE_MINT);
     expect(result.has_liquidity).toBe(false);
+  });
+
+  it("uses DexScreener fallback when Jupiter quote is null", async () => {
+    vi.mocked(fetchDexScreenerLiquidity).mockResolvedValueOnce({
+      has_liquidity: true,
+      primary_pool: "raydium",
+      pool_address: "DexPool111",
+      liquidity_usd: 150_000,
+      liquidity_rating: "DEEP",
+    });
+
+    const result = await checkLiquidity(FAKE_MINT, null);
+    expect(result.has_liquidity).toBe(true);
+    expect(result.primary_pool).toBe("raydium");
+    expect(result.pool_address).toBe("DexPool111");
+    expect(result.liquidity_rating).toBe("DEEP");
+    expect(result.price_impact_pct).toBeNull();
+    expect(result.risk).toBe("SAFE");
+  });
+
+  it("returns WARNING risk from DexScreener when liquidity is shallow", async () => {
+    vi.mocked(fetchDexScreenerLiquidity).mockResolvedValueOnce({
+      has_liquidity: true,
+      primary_pool: "meteora",
+      pool_address: "MetPool111",
+      liquidity_usd: 500,
+      liquidity_rating: "NONE",
+    });
+
+    const result = await checkLiquidity(FAKE_MINT, null);
+    expect(result.has_liquidity).toBe(true);
+    expect(result.risk).toBe("WARNING");
   });
 
   it("extracts priceImpactPct, poolAddress, and primaryPool from quote", async () => {
