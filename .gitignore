@@ -6,3 +6,7 @@ CLAUDE.md
 MORGAN.md
 TODO-after-launch.md
 content/
+data/
+*.db
+*.db-shm
+*.db-wal
