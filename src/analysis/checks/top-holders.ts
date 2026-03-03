@@ -86,13 +86,20 @@ async function fetchTopHoldersDAS(
       });
 
       if (!res.ok) {
-        logger.warn({ status: res.status, mintAddress }, "Helius DAS getTokenAccounts HTTP error");
+        logger.warn({ status: res.status, mintAddress, page }, "Helius DAS getTokenAccounts HTTP error");
         break;
       }
 
       const data = await res.json();
+      if (data?.error) {
+        logger.warn({ rpcError: data.error, mintAddress, page }, "Helius DAS returned JSON-RPC error");
+        break;
+      }
       const accounts = data?.result?.token_accounts;
-      if (!Array.isArray(accounts) || accounts.length === 0) break;
+      if (!Array.isArray(accounts) || accounts.length === 0) {
+        logger.warn({ mintAddress, page, hasResult: !!data?.result, accountsType: typeof accounts }, "Helius DAS returned no token_accounts");
+        break;
+      }
 
       for (const acct of accounts) {
         if (acct.amount && acct.address) {
