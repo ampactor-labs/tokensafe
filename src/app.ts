@@ -121,12 +121,12 @@ app.use((req, res, next) => {
 
 // 2b. Request-level timeout — hard ceiling so no single request blocks forever
 app.use((req, res, next) => {
-  req.setTimeout(15_000, () => {
+  req.setTimeout(30_000, () => {
     if (!res.headersSent) {
       res.status(504).json({
         error: {
           code: "TIMEOUT",
-          message: "Request timed out after 15 seconds",
+          message: "Request timed out after 30 seconds",
         },
       });
     }
