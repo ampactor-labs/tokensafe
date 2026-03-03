@@ -6,6 +6,8 @@
  * separate modules were making independently.
  */
 
+import { logger } from "../../utils/logger.js";
+
 const JUPITER_QUOTE_URL = "https://lite-api.jup.ag/swap/v1/quote";
 export const SOL_MINT = "So11111111111111111111111111111111111111112";
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -34,7 +36,12 @@ export async function fetchQuote(
 ): Promise<JupiterQuote | null> {
   const url = `${JUPITER_QUOTE_URL}?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=500`;
   const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    if (res.status === 429) {
+      logger.warn({ inputMint, outputMint }, "Jupiter rate limited (429)");
+    }
+    return null;
+  }
 
   const data = await res.json();
   const routes = data.routePlan as

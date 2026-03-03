@@ -67,7 +67,7 @@ export interface TokenCheckResult {
       top_1_percentage: number;
       holder_count_estimate: number | null;
       note: string | null;
-      risk: "SAFE" | "HIGH" | "CRITICAL";
+      risk: "SAFE" | "HIGH" | "CRITICAL" | "UNKNOWN";
     };
     liquidity: (LiquidityResult & { status: "OK" | "UNAVAILABLE" }) | null;
     metadata: {
@@ -114,6 +114,9 @@ export interface TokenCheckLiteResult {
   risk_level: string;
   summary: string;
   degraded: boolean;
+  degraded_checks: string[];
+  checks_completed: number;
+  checks_total: number;
   is_token_2022: boolean;
   has_risky_extensions: boolean;
   can_sell: boolean | null;
@@ -207,6 +210,7 @@ export async function checkTokenLite(
       (e.transfer_fee_bps != null && e.transfer_fee_bps > 0) ||
       !!e.transfer_hook_program,
   );
+  const TOTAL_CHECKS = 6; // mint_authority, top_holders, liquidity, metadata, token_age, honeypot
   return {
     result: {
       mint: result.mint,
@@ -216,6 +220,9 @@ export async function checkTokenLite(
       risk_level: result.risk_level,
       summary: result.summary,
       degraded: result.degraded,
+      degraded_checks: result.degraded_checks,
+      checks_completed: TOTAL_CHECKS - result.degraded_checks.length,
+      checks_total: TOTAL_CHECKS,
       is_token_2022: result.checks.is_token_2022,
       has_risky_extensions: hasRisky,
       can_sell: result.checks.honeypot?.can_sell ?? null,
@@ -258,14 +265,14 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
   // Step 2: run remaining checks in parallel (fault-isolated)
   // Jupiter round-trip (2 sequential calls) feeds both honeypot + liquidity,
   // saving one external HTTP call vs making them independently.
-  const fallbackHolders: TopHoldersResult & { status: "OK" | "UNAVAILABLE" } = {
+  const fallbackHolders: TopHoldersResult = {
     status: "UNAVAILABLE",
     top_10_percentage: 0,
     top_1_percentage: 0,
     holder_count_estimate: null,
     top_holders_detail: null,
-    note: null,
-    risk: "SAFE",
+    note: "Top holders check failed — concentration unknown",
+    risk: "UNKNOWN",
   };
 
   const emptyTrip: JupiterRoundTrip = {
@@ -276,11 +283,7 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
 
   const [holders, jupiterTrip, metadata, tokenAge] = await Promise.all([
     checkTopHolders(mintAddress, mintData.supplyRaw)
-      .then((r): TopHoldersResult & { status: "OK" | "UNAVAILABLE" } => ({
-        ...r,
-        status: "OK",
-      }))
-      .catch((err): TopHoldersResult & { status: "OK" | "UNAVAILABLE" } => {
+      .catch((err): TopHoldersResult => {
         logger.warn({ err, mintAddress }, "Top holders check failed");
         return fallbackHolders;
       }),
@@ -345,6 +348,17 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
     };
   }
 
+  // Degraded = which checks couldn't run. Token-2022 metadata counts as metadata.
+  // Built BEFORE scoring so uncertainty penalties apply.
+  const degradedChecks: string[] = [];
+  if (holders.status === "UNAVAILABLE") degradedChecks.push("top_holders");
+  if (liquidity === null) degradedChecks.push("liquidity");
+  if (metadata === null && !tokenMetadataExt) degradedChecks.push("metadata");
+  if (honeypot === null) degradedChecks.push("honeypot");
+  if (tokenAge === null || (tokenAge.token_age_hours === null && !tokenAge.established))
+    degradedChecks.push("token_age");
+  const degraded = degradedChecks.length > 0;
+
   const riskInput = {
     mint: mintData,
     holders,
@@ -352,18 +366,11 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
     metadata: effectiveMetadata,
     tokenAge,
     honeypot,
+    degradedChecks,
   };
   const { risk_score, risk_level, breakdown } = computeRiskScore(riskInput);
   const risk_factors = getRiskFactors(riskInput);
   const summary = generateRiskSummary(riskInput);
-
-  // Degraded = which checks couldn't run. Token-2022 metadata counts as metadata.
-  const degradedChecks: string[] = [];
-  if (holders.status === "UNAVAILABLE") degradedChecks.push("top_holders");
-  if (liquidity === null) degradedChecks.push("liquidity");
-  if (metadata === null && !tokenMetadataExt) degradedChecks.push("metadata");
-  if (honeypot === null) degradedChecks.push("honeypot");
-  const degraded = degradedChecks.length > 0;
 
   const checked_at = new Date().toISOString();
 
@@ -390,7 +397,7 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
         total: mintData.supplyRaw.toString(),
         decimals: mintData.decimals,
       },
-      top_holders: { ...holders, note: holderNote },
+      top_holders: { ...holders, note: holderNote ?? holders.note },
       liquidity,
       metadata: effectiveMetadata
         ? {
