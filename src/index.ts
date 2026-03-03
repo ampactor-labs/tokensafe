@@ -37,8 +37,8 @@ const server = app.listen(config.port, () => {
   );
 });
 
-process.on("SIGTERM", () => {
-  logger.info("SIGTERM received, draining connections");
+function shutdown(signal: string) {
+  logger.info({ signal }, "Shutdown signal received, draining connections");
   if (monitorTimer) stopMonitorJob(monitorTimer);
   server.close(() => {
     closeDb();
@@ -49,4 +49,7 @@ process.on("SIGTERM", () => {
     closeDb();
     process.exit(1);
   }, 20_000);
-});
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

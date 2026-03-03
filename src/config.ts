@@ -34,7 +34,7 @@ export const config = {
   ),
   ownershipProof: process.env.X402_OWNERSHIP_PROOF || "",
   webhookAdminBearer: process.env.WEBHOOK_ADMIN_BEARER || "",
-  dbPath: process.env.DB_PATH || "tokensafe.db",
+  dbPath: process.env.DB_PATH || "data/tokensafe.db",
   maxWebhooksPerToken: parseInt(
     process.env.MAX_WEBHOOKS_PER_TOKEN || "100",
     10,
