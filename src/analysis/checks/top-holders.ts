@@ -1,6 +1,5 @@
 import { PublicKey } from "@solana/web3.js";
 import { getConnection } from "../../solana/rpc.js";
-import { config } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 
 export interface HolderDetail {
@@ -29,13 +28,13 @@ export async function checkTopHolders(
       new PublicKey(mintAddress),
     );
   } catch (err) {
-    // Any RPC failure (timeout, rate limit, "Too many accounts", etc.)
-    // → try Helius DAS before giving up
     logger.warn(
       { err: err instanceof Error ? err.message : String(err), mintAddress },
-      "getTokenLargestAccounts failed, trying DAS fallback",
+      "getTokenLargestAccounts failed",
     );
-    return fetchTopHoldersDAS(mintAddress, totalSupplyRaw);
+    return unavailableHolders(
+      "Top holder data unavailable (RPC error) — concentration unknown",
+    );
   }
 
   const accounts = largestAccounts.value;
@@ -53,91 +52,6 @@ export async function checkTopHolders(
   }
 
   return computeConcentration(accounts, totalSupplyRaw, null);
-}
-
-/**
- * Helius DAS `getTokenAccounts` fallback — fetches up to 3 pages (3000 accounts),
- * sorts client-side by amount, and computes top-10/top-1 concentration.
- */
-async function fetchTopHoldersDAS(
-  mintAddress: string,
-  totalSupplyRaw: bigint,
-): Promise<TopHoldersResult> {
-  try {
-    const rpcUrl = config.heliusRpcUrl;
-    const allAccounts: Array<{ address: string; amount: string }> = [];
-
-    for (let page = 1; page <= 3; page++) {
-      const res = await fetch(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: "tokensafe-das",
-          method: "getTokenAccounts",
-          params: {
-            mint: mintAddress,
-            page,
-            limit: 1000,
-            options: { showZeroBalance: false },
-          },
-        }),
-        signal: AbortSignal.timeout(10_000),
-      });
-
-      if (!res.ok) {
-        logger.warn({ status: res.status, mintAddress, page }, "Helius DAS getTokenAccounts HTTP error");
-        break;
-      }
-
-      const data = await res.json();
-      if (data?.error) {
-        logger.warn({ rpcError: data.error, mintAddress, page }, "Helius DAS returned JSON-RPC error");
-        break;
-      }
-      const accounts = data?.result?.token_accounts;
-      if (!Array.isArray(accounts) || accounts.length === 0) {
-        logger.warn({ mintAddress, page, hasResult: !!data?.result, accountsType: typeof accounts }, "Helius DAS returned no token_accounts");
-        break;
-      }
-
-      for (const acct of accounts) {
-        if (acct.amount && acct.address) {
-          allAccounts.push({ address: acct.address, amount: acct.amount });
-        }
-      }
-
-      // Less than 1000 results means no more pages
-      if (accounts.length < 1000) break;
-    }
-
-    if (allAccounts.length === 0 || totalSupplyRaw === 0n) {
-      return unavailableHolders("Token has too many holders and DAS returned no accounts — concentration unknown");
-    }
-
-    // Sort by amount descending, take top 10
-    allAccounts.sort((a, b) => {
-      const diff = BigInt(b.amount) - BigInt(a.amount);
-      return diff > 0n ? 1 : diff < 0n ? -1 : 0;
-    });
-
-    const rpcStyleAccounts = allAccounts.slice(0, 20).map((a) => ({
-      address: { toBase58: () => a.address },
-      amount: a.amount,
-    }));
-
-    const result = computeConcentration(
-      rpcStyleAccounts as any,
-      totalSupplyRaw,
-      `Approximated from top ${Math.min(allAccounts.length, 3000)} accounts (Helius DAS)`,
-    );
-    // DAS doesn't give total holder count
-    result.holder_count_estimate = null;
-    return result;
-  } catch (err) {
-    logger.warn({ err, mintAddress }, "Helius DAS top holders fallback failed");
-    return unavailableHolders("Token has too many holders and DAS fallback failed — concentration unknown");
-  }
 }
 
 function unavailableHolders(note: string): TopHoldersResult {

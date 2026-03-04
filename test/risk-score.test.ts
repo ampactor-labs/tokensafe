@@ -136,32 +136,79 @@ describe("computeRiskScore", () => {
     expect(result.risk_level).toBe("MODERATE");
   });
 
-  // --- Holder concentration ---
-  it("adds 15 for top 10 holders > 50%", () => {
+  // --- Holder concentration (graduated) ---
+  it("adds 25 for top 10 holders > 80%", () => {
+    const result = computeRiskScore(
+      makeInput({ holders: makeHolders({ top_10_percentage: 85 }) }),
+    );
+    expect(result.breakdown.top_holders_10).toBe(25);
+  });
+
+  it("adds 20 for top 10 holders > 50% and <= 80%", () => {
     const result = computeRiskScore(
       makeInput({ holders: makeHolders({ top_10_percentage: 55 }) }),
     );
-    expect(result.risk_score).toBe(15);
+    expect(result.breakdown.top_holders_10).toBe(20);
   });
 
-  it("adds 10 for top 1 holder > 20% when no active liquidity", () => {
+  it("adds 10 for top 10 holders > 30% and <= 50%", () => {
     const result = computeRiskScore(
-      makeInput({
-        holders: makeHolders({ top_1_percentage: 25 }),
-        liquidity: null,
-      }),
+      makeInput({ holders: makeHolders({ top_10_percentage: 35 }) }),
     );
-    expect(result.risk_score).toBe(10);
+    expect(result.breakdown.top_holders_10).toBe(10);
   });
 
-  it("skips top 1 whale penalty when token has active liquidity (AMM vault)", () => {
+  it("adds 0 for top 10 holders <= 30%", () => {
+    const result = computeRiskScore(
+      makeInput({ holders: makeHolders({ top_10_percentage: 25 }) }),
+    );
+    expect(result.breakdown.top_holders_10).toBeUndefined();
+  });
+
+  it("adds 25 for top 1 holder > 50%", () => {
+    const result = computeRiskScore(
+      makeInput({ holders: makeHolders({ top_1_percentage: 55 }) }),
+    );
+    expect(result.breakdown.top_holders_1).toBe(25);
+  });
+
+  it("adds 15 for top 1 holder > 30% and <= 50%", () => {
+    const result = computeRiskScore(
+      makeInput({ holders: makeHolders({ top_1_percentage: 35 }) }),
+    );
+    expect(result.breakdown.top_holders_1).toBe(15);
+  });
+
+  it("adds 10 for top 1 holder > 20% and <= 30%", () => {
+    const result = computeRiskScore(
+      makeInput({ holders: makeHolders({ top_1_percentage: 25 }) }),
+    );
+    expect(result.breakdown.top_holders_1).toBe(10);
+  });
+
+  it("adds 5 for top 1 holder > 10% and <= 20%", () => {
+    const result = computeRiskScore(
+      makeInput({ holders: makeHolders({ top_1_percentage: 15 }) }),
+    );
+    expect(result.breakdown.top_holders_1).toBe(5);
+  });
+
+  it("adds 0 for top 1 holder <= 10%", () => {
+    const result = computeRiskScore(
+      makeInput({ holders: makeHolders({ top_1_percentage: 8 }) }),
+    );
+    expect(result.breakdown.top_holders_1).toBeUndefined();
+  });
+
+  it("applies top 1 penalty even with active liquidity (no AMM vault exemption)", () => {
     const result = computeRiskScore(
       makeInput({
         holders: makeHolders({ top_1_percentage: 25 }),
         liquidity: makeLiquidity({ has_liquidity: true }),
       }),
     );
-    expect(result.risk_score).toBe(0);
+    expect(result.breakdown.top_holders_1).toBe(10);
+    expect(result.risk_score).toBe(10);
   });
 
   // --- Liquidity ---
@@ -428,13 +475,13 @@ describe("computeRiskScore", () => {
           mintAuthority: "A",
           freezeAuthority: "B",
         }),
-        holders: makeHolders({ top_10_percentage: 80, top_1_percentage: 40 }),
+        holders: makeHolders({ top_10_percentage: 85, top_1_percentage: 55 }),
         liquidity: makeLiquidity({ has_liquidity: false }),
         metadata: makeMetadata({ mutable: true }),
         tokenAge: makeAge({ token_age_hours: 0.1 }),
       }),
     );
-    // 30 + 25 + 15 + 10 + 30 + 10 + 10 = 130 → capped at 100
+    // 30 + 25 + 25 + 25 + 30 + 10 + 10 = 155 → capped at 100
     expect(result.risk_score).toBe(100);
     expect(result.risk_level).toBe("EXTREME");
   });
@@ -443,11 +490,11 @@ describe("computeRiskScore", () => {
   it("boundary: score 20 is LOW", () => {
     const result = computeRiskScore(
       makeInput({
-        holders: makeHolders({ top_10_percentage: 55 }),
-        tokenAge: makeAge({ token_age_hours: 12 }),
+        holders: makeHolders({ top_10_percentage: 35 }),
+        tokenAge: makeAge({ token_age_hours: 0.5 }),
       }),
     );
-    // 15 (top10>50%) + 5 (age<24h) = 20
+    // 10 (top10>30%) + 10 (age<1h) = 20
     expect(result.risk_score).toBe(20);
     expect(result.risk_level).toBe("LOW");
   });
@@ -614,7 +661,6 @@ describe("computeRiskScore", () => {
           top_10_percentage: 55,
           top_1_percentage: 25,
         }),
-        liquidity: null,
         metadata: makeMetadata({ mutable: true }),
         tokenAge: makeAge({ token_age_hours: 0.5 }),
       }),
@@ -622,6 +668,9 @@ describe("computeRiskScore", () => {
     const sum = Object.values(result.breakdown).reduce((a, b) => a + b, 0);
     // Score may be capped at 100, but breakdown sum reflects actual penalties
     expect(sum).toBeGreaterThanOrEqual(result.risk_score);
+    // Verify separate keys exist for top 10 and top 1
+    expect(result.breakdown).toHaveProperty("top_holders_10");
+    expect(result.breakdown).toHaveProperty("top_holders_1");
   });
 
   it("breakdown tracks honeypot and sell_tax as separate keys", () => {
@@ -655,14 +704,14 @@ describe("computeRiskScore", () => {
     expect(result.breakdown.transfer_hook).toBe(15);
   });
 
-  it("breakdown includes top_holders with combined concentration penalties", () => {
+  it("breakdown includes separate top_holders_10 and top_holders_1 keys", () => {
     const result = computeRiskScore(
       makeInput({
-        holders: makeHolders({ top_10_percentage: 80, top_1_percentage: 40 }),
-        liquidity: null,
+        holders: makeHolders({ top_10_percentage: 85, top_1_percentage: 55 }),
       }),
     );
-    expect(result.breakdown.top_holders).toBe(25); // 15 + 10
+    expect(result.breakdown.top_holders_10).toBe(25); // >80%
+    expect(result.breakdown.top_holders_1).toBe(25);  // >50%
   });
 
   it("skips mint authority penalty for PYUSD (Paxos)", () => {
@@ -776,7 +825,7 @@ describe("generateRiskSummary", () => {
     expect(summary.split(", ").length).toBe(3);
   });
 
-  it("includes holder percentages", () => {
+  it("includes holder percentages when above thresholds", () => {
     const summary = generateRiskSummary(
       makeInput({
         holders: makeHolders({
@@ -787,6 +836,19 @@ describe("generateRiskSummary", () => {
     );
     expect(summary).toContain("top 10 holders own 75.3% of supply");
     expect(summary).toContain("top holder owns 25.1%");
+  });
+
+  it("includes top 1 holder at >10% threshold", () => {
+    const summary = generateRiskSummary(
+      makeInput({
+        holders: makeHolders({
+          top_10_percentage: 25,
+          top_1_percentage: 15,
+        }),
+      }),
+    );
+    expect(summary).not.toContain("top 10 holders");
+    expect(summary).toContain("top holder owns 15.0%");
   });
 
   it("includes transfer fee percentage", () => {

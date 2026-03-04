@@ -113,12 +113,18 @@ export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
     }
   }
 
-  // Top holder concentration
-  if (input.holders.top_10_percentage > 50) add("top_holders", 15);
-  // Skip single-whale penalty if token has active liquidity — top holder is likely the AMM vault
-  const hasActiveLiquidity = input.liquidity?.has_liquidity === true;
-  if (input.holders.top_1_percentage > 20 && !hasActiveLiquidity)
-    add("top_holders", 10);
+  // Top 10 concentration (graduated, mutually exclusive)
+  const t10 = input.holders.top_10_percentage;
+  if (t10 > 80) add("top_holders_10", 25);
+  else if (t10 > 50) add("top_holders_10", 20);
+  else if (t10 > 30) add("top_holders_10", 10);
+
+  // Top 1 concentration (graduated, always applied — no liquidity exemption)
+  const t1 = input.holders.top_1_percentage;
+  if (t1 > 50) add("top_holders_1", 25);
+  else if (t1 > 30) add("top_holders_1", 15);
+  else if (t1 > 20) add("top_holders_1", 10);
+  else if (t1 > 10) add("top_holders_1", 5);
 
   // Liquidity
   if (input.liquidity) {
@@ -203,11 +209,11 @@ export function getRiskFactors(input: RiskScoreInput): string[] {
   ) {
     flags.push("active freeze authority");
   }
-  if (input.holders.top_10_percentage > 50)
+  if (input.holders.top_10_percentage > 30)
     flags.push(
       `top 10 holders own ${input.holders.top_10_percentage.toFixed(1)}% of supply`,
     );
-  if (input.holders.top_1_percentage > 20)
+  if (input.holders.top_1_percentage > 10)
     flags.push(`top holder owns ${input.holders.top_1_percentage.toFixed(1)}%`);
   if (input.liquidity && !input.liquidity.has_liquidity)
     flags.push("no liquidity detected");

@@ -564,13 +564,10 @@ describe("checkTopHolders", () => {
     expect(result.top_holders_detail).toBeNull();
   });
 
-  it("returns UNAVAILABLE/UNKNOWN when 'Too many accounts' and DAS fallback fails", async () => {
+  it("returns UNAVAILABLE/UNKNOWN when RPC fails (no DAS fallback)", async () => {
     conn.getTokenLargestAccounts.mockRejectedValue(
       new Error("Too many accounts provided; max 500"),
     );
-    // Mock fetch to simulate DAS failure
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn().mockRejectedValue(new Error("DAS unavailable"));
 
     const result = await checkTopHolders(MINT, 1_000_000_000_000n);
     expect(result.status).toBe("UNAVAILABLE");
@@ -578,54 +575,17 @@ describe("checkTopHolders", () => {
     expect(result.holder_count_estimate).toBeNull();
     expect(result.top_10_percentage).toBe(0);
     expect(result.top_1_percentage).toBe(0);
-    expect(result.note).toContain("DAS fallback failed");
-
-    globalThis.fetch = originalFetch;
+    expect(result.note).toContain("RPC error");
   });
 
-  it("uses DAS fallback on 'Too many accounts' error", async () => {
-    conn.getTokenLargestAccounts.mockRejectedValue(
-      new Error("Too many accounts provided; max 500"),
-    );
-    // Mock DAS response with accounts — amounts relative to supply for meaningful percentages
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          result: {
-            token_accounts: [
-              { address: "Holder1111111111111111111111111111111111111", amount: "500000000000" },
-              { address: "Holder2222222222222222222222222222222222222", amount: "200000000000" },
-              { address: "Holder3333333333333333333333333333333333333", amount: "100000000000" },
-            ],
-          },
-        }),
-    });
-
-    const result = await checkTopHolders(MINT, 1_000_000_000_000n);
-    expect(result.status).toBe("OK");
-    expect(result.risk).not.toBe("UNKNOWN");
-    expect(result.top_1_percentage).toBeGreaterThan(0);
-    expect(result.note).toContain("Helius DAS");
-    expect(result.holder_count_estimate).toBeNull();
-
-    globalThis.fetch = originalFetch;
-  });
-
-  it("tries DAS fallback on non-Too-many-accounts errors too", async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn().mockRejectedValue(new Error("DAS also down"));
-
+  it("returns UNAVAILABLE on connection timeout", async () => {
     conn.getTokenLargestAccounts.mockRejectedValue(
       new Error("Connection timeout"),
     );
     const result = await checkTopHolders(MINT, 1000n);
     expect(result.status).toBe("UNAVAILABLE");
     expect(result.risk).toBe("UNKNOWN");
-    expect(result.note).toContain("DAS fallback failed");
-
-    globalThis.fetch = originalFetch;
+    expect(result.note).toContain("RPC error");
   });
 });
 
