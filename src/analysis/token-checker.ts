@@ -318,12 +318,6 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
   const liquidity: (LiquidityResult & { status: "OK" | "UNAVAILABLE" }) | null =
     liquidityRaw ? { ...liquidityRaw, status: "OK" } : null;
 
-  // Post-processing: holder note for AMM vault ambiguity
-  const holderNote =
-    liquidity?.has_liquidity && holders.top_1_percentage > 20
-      ? "Top holder may be an AMM vault (token has active liquidity)"
-      : null;
-
   // Token-2022 embedded metadata fallback (pump.fun tokens use this instead of Metaplex)
   const tokenMetadataExt = mintData.extensions.find(
     (e) => e.name === "TokenMetadata",
@@ -397,7 +391,7 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
         total: mintData.supplyRaw.toString(),
         decimals: mintData.decimals,
       },
-      top_holders: { ...holders, note: holderNote ?? holders.note },
+      top_holders: holders,
       liquidity,
       metadata: effectiveMetadata
         ? {
