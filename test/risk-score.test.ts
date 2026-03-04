@@ -317,8 +317,8 @@ describe("computeRiskScore", () => {
       }),
     );
     // 2 signals (deep liq + distributed), NOT 3 (timeout ≠ established)
-    // mint authority with 2 signals → +5
-    expect(result.risk_score).toBe(5);
+    // mint authority with 2 signals → +15 (floor)
+    expect(result.risk_score).toBe(15);
   });
 
   // --- Token-2022 extensions ---
@@ -593,8 +593,8 @@ describe("computeRiskScore", () => {
         }),
       }),
     );
-    // 3 maturity signals (deep liquidity, established, distributed) → +5
-    expect(result.risk_score).toBe(5);
+    // 3 maturity signals (deep liquidity, established, distributed) → +15 (floor)
+    expect(result.risk_score).toBe(15);
   });
 
   it("reduces freeze authority penalty for mature token (2+ signals)", () => {
@@ -609,8 +609,28 @@ describe("computeRiskScore", () => {
         }),
       }),
     );
-    // 2 maturity signals (established, distributed) → +3
-    expect(result.risk_score).toBe(3);
+    // 2 maturity signals (established, distributed) → +10 (floor)
+    expect(result.risk_score).toBe(10);
+  });
+
+  it("floors authority penalties even with 3 maturity signals", () => {
+    const result = computeRiskScore(
+      makeInput({
+        mint: makeMint({ mintAuthority: "Attacker1", freezeAuthority: "Attacker2" }),
+        holders: makeHolders({ top_10_percentage: 15 }),
+        liquidity: makeLiquidity({ liquidity_rating: "DEEP" }),
+        tokenAge: makeAge({
+          token_age_hours: 720,
+          created_at: "2025-01-01T00:00:00.000Z",
+          established: true,
+        }),
+      }),
+    );
+    // 3 maturity signals → mint +15, freeze +10 = 25 (MODERATE, not LOW)
+    expect(result.risk_score).toBe(25);
+    expect(result.risk_level).toBe("MODERATE");
+    expect(result.breakdown.mint_authority).toBe(15);
+    expect(result.breakdown.freeze_authority).toBe(10);
   });
 
   it("USDC-like token scores LOW despite active authorities", () => {

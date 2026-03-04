@@ -94,28 +94,29 @@ export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
   // RPC timeout (tokenAge === null) does NOT count as established.
   const maturitySignals = getMaturitySignals(input);
 
-  // Mint authority
+  // Mint authority — floor penalties ensure active untrusted authorities
+  // always score meaningfully, even with maturity signals (anti-gaming)
   if (input.mint.mintAuthority !== null) {
     if (TRUSTED_MINT_AUTHORITIES.has(input.mint.mintAuthority)) {
       // No penalty for known trusted authorities
     } else if (maturitySignals >= 2) {
-      add("mint_authority", 5);
-    } else if (maturitySignals === 1) {
       add("mint_authority", 15);
+    } else if (maturitySignals === 1) {
+      add("mint_authority", 20);
     } else {
       add("mint_authority", 30);
     }
   }
 
-  // Freeze authority
+  // Freeze authority — same floor logic as mint authority
   if (
     input.mint.freezeAuthority !== null &&
     !TRUSTED_FREEZE_AUTHORITIES.has(input.mint.freezeAuthority)
   ) {
     if (maturitySignals >= 2) {
-      add("freeze_authority", 3);
+      add("freeze_authority", 10);
     } else if (maturitySignals === 1) {
-      add("freeze_authority", 12);
+      add("freeze_authority", 15);
     } else {
       add("freeze_authority", 25);
     }

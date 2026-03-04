@@ -5,7 +5,6 @@ import {
 } from "./checks/mint-authority.js";
 import {
   checkTopHolders,
-  adjustForVaults,
   type TopHoldersResult,
 } from "./checks/top-holders.js";
 import { checkLiquidity, type LiquidityResult } from "./checks/liquidity.js";
@@ -65,14 +64,7 @@ export interface TokenCheckResult {
       total: string;
       decimals: number;
     };
-    top_holders: {
-      status: "OK" | "UNAVAILABLE";
-      top_10_percentage: number;
-      top_1_percentage: number;
-      holder_count_estimate: number | null;
-      note: string | null;
-      risk: "SAFE" | "HIGH" | "CRITICAL" | "UNKNOWN";
-    };
+    top_holders: TopHoldersResult;
     liquidity: (LiquidityResult & { status: "OK" | "UNAVAILABLE" }) | null;
     metadata: {
       status: "OK" | "UNAVAILABLE";
@@ -345,19 +337,6 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
   const liquidity: (LiquidityResult & { status: "OK" | "UNAVAILABLE" }) | null =
     liquidityRaw ? { ...liquidityRaw, status: "OK" } : null;
 
-  // Adjust holders for AMM vault exclusion — vault token accounts hold liquidity, not whale concentration
-  let adjustedHolders = holders;
-  if (
-    liquidity?.pool_vault_addresses?.length &&
-    holders.status === "OK" &&
-    holders.top_holders_detail
-  ) {
-    adjustedHolders = adjustForVaults(
-      holders,
-      new Set(liquidity.pool_vault_addresses),
-    );
-  }
-
   // Token-2022 embedded metadata fallback (pump.fun tokens use this instead of Metaplex)
   const tokenMetadataExt = mintData.extensions.find(
     (e) => e.name === "TokenMetadata",
@@ -400,7 +379,7 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
 
   const riskInput = {
     mint: mintData,
-    holders: adjustedHolders,
+    holders: holders,
     liquidity,
     metadata: effectiveMetadata,
     tokenAge,
@@ -436,7 +415,7 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
         total: mintData.supplyRaw.toString(),
         decimals: mintData.decimals,
       },
-      top_holders: adjustedHolders,
+      top_holders: holders,
       liquidity,
       metadata: effectiveMetadata
         ? {
