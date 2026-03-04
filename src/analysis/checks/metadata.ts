@@ -89,11 +89,20 @@ function parseMetadataAccount(data: Buffer): ParsedMetadata {
   if (hasCreators) {
     const numCreators = data.readUInt32LE(offset);
     offset += 4;
+    // Bounds guard: Metaplex allows max 5 creators; reject clearly invalid counts
+    if (numCreators > 10 || offset + numCreators * 34 > data.length) {
+      throw new Error("Invalid creator array in metadata");
+    }
     offset += numCreators * 34; // each creator: pubkey(32) + verified(1) + share(1)
   }
 
   // primary_sale_happened: 1 byte
   offset += 1;
+
+  // Bounds guard before reading isMutable
+  if (offset >= data.length) {
+    throw new Error("Metadata truncated before isMutable field");
+  }
 
   // is_mutable: 1 byte
   const isMutable = data[offset] === 1;

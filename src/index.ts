@@ -72,15 +72,31 @@ function shutdown(signal: string) {
   if (monitorTimer) stopMonitorJob(monitorTimer);
   server.close(() => {
     safeCloseDb();
-    logger.info("Database closed, exiting");
+    logger.info("All connections drained, exiting cleanly");
     process.exit(0);
   });
+  // Immediately close idle keep-alive connections
+  server.closeIdleConnections();
+  // Hard deadline — force-close anything still in flight
   setTimeout(() => {
-    logger.warn("Hard shutdown timeout reached");
+    logger.warn("Hard shutdown timeout reached, force-closing connections");
+    server.closeAllConnections();
     safeCloseDb();
     process.exit(1);
-  }, 20_000);
+  }, 20_000).unref();
 }
 
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
+
+process.on("uncaughtException", (err) => {
+  logger.error({ err }, "Uncaught exception — emergency shutdown");
+  safeCloseDb();
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  logger.error({ reason }, "Unhandled promise rejection — emergency shutdown");
+  safeCloseDb();
+  process.exit(1);
+});

@@ -18,11 +18,21 @@ vi.mock("../src/analysis/token-checker.js", () => ({
   checkTokenLite: vi.fn(),
 }));
 
+// Mock SSRF guard — DNS resolution not available in unit tests
+vi.mock("../src/utils/ssrf-guard.js", () => ({
+  validateWebhookUrl: vi.fn().mockResolvedValue(undefined),
+  isPrivateIp: vi.fn().mockReturnValue(false),
+  resolveAndCheckIps: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { app } from "../src/app.js";
 import { checkToken, checkTokenLite } from "../src/analysis/token-checker.js";
+import { validateWebhookUrl } from "../src/utils/ssrf-guard.js";
 import { clearCache } from "../src/utils/cache.js";
 import { clearRateLimitBuckets } from "../src/utils/rate-limit.js";
 import { initTestDb, closeDb } from "../src/utils/db.js";
+
+const mockValidateWebhookUrl = vi.mocked(validateWebhookUrl);
 
 const mockCheckToken = vi.mocked(checkToken);
 const mockCheckTokenLite = vi.mocked(checkTokenLite);
@@ -259,6 +269,12 @@ describe("GET /v1/check", () => {
     const res = await request(app).get("/v1/check");
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe("MISSING_REQUIRED_PARAM");
+  });
+
+  it("returns 400 for invalid base58 mint on /v1/check", async () => {
+    const res = await request(app).get("/v1/check?mint=not-valid-base58!!!");
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_MINT_ADDRESS");
   });
 
   it("returns 400 for invalid mint address", async () => {
@@ -874,6 +890,53 @@ describe("Webhook CRUD /v1/webhooks", () => {
     expect(res.status).toBe(404);
     expect(res.body.error.code).toBe("WEBHOOK_NOT_FOUND");
   });
+
+  it("rejects webhook with private IP (SSRF prevention)", async () => {
+    mockValidateWebhookUrl.mockRejectedValueOnce(
+      new Error("Resolved IP 127.0.0.1 for localhost is in a private/reserved range"),
+    );
+    const res = await request(app)
+      .post("/v1/webhooks")
+      .set(AUTH)
+      .send({
+        callback_url: "http://127.0.0.1:8080/hook",
+        mints: [WSOL],
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_WEBHOOK_URL");
+  });
+
+  it("rejects webhook targeting AWS metadata endpoint (SSRF)", async () => {
+    mockValidateWebhookUrl.mockRejectedValueOnce(
+      new Error("Resolved IP 169.254.169.254 is in a private/reserved range"),
+    );
+    const res = await request(app)
+      .post("/v1/webhooks")
+      .set(AUTH)
+      .send({
+        callback_url: "http://169.254.169.254/latest/meta-data/",
+        mints: [WSOL],
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_WEBHOOK_URL");
+  });
+
+  it("rejects PATCH with private IP callback_url (SSRF)", async () => {
+    const createRes = await request(app)
+      .post("/v1/webhooks")
+      .set(AUTH)
+      .send({ callback_url: "https://example.com/hook", mints: [WSOL] });
+
+    mockValidateWebhookUrl.mockRejectedValueOnce(
+      new Error("Only HTTPS callback URLs are allowed in production"),
+    );
+    const res = await request(app)
+      .patch(`/v1/webhooks/${createRes.body.id}`)
+      .set(AUTH)
+      .send({ callback_url: "http://10.0.0.1/hook" });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("INVALID_WEBHOOK_URL");
+  });
 });
 
 describe("API key auth", () => {
@@ -1308,6 +1371,47 @@ describe("GET /v1/audit/history", () => {
     const res = await request(app).get("/v1/audit/history").set(AUTH);
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
+  });
+
+  it("handles NaN limit gracefully (defaults to 50)", async () => {
+    const res = await request(app)
+      .get("/v1/audit/history?limit=abc")
+      .set("X-API-Key", apiKey);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+
+  it("rejects invalid from date", async () => {
+    const res = await request(app)
+      .get("/v1/audit/history?from=not-a-date")
+      .set("X-API-Key", apiKey);
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toContain("valid ISO date");
+  });
+
+  it("rejects invalid to date", async () => {
+    const res = await request(app)
+      .get("/v1/audit/history?to=garbage")
+      .set("X-API-Key", apiKey);
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toContain("valid ISO date");
+  });
+
+  it("rejects expired API key on audit history", async () => {
+    const expRes = await request(app)
+      .post("/v1/api-keys")
+      .set(AUTH)
+      .send({
+        label: "expired-audit",
+        tier: "pro",
+        expires_at: "2020-01-01T00:00:00Z",
+      });
+    const expiredKey = expRes.body.key;
+    // Expired key should not grant audit read access — falls through to bearer check which also fails
+    const res = await request(app)
+      .get("/v1/audit/history")
+      .set("X-API-Key", expiredKey);
+    expect(res.status).toBe(401);
   });
 });
 

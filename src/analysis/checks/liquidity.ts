@@ -75,7 +75,7 @@ interface LpLockResult {
 export async function checkLiquidity(
   mintAddress: string,
   prefetchedQuote?: JupiterQuote | null,
-): Promise<LiquidityResult> {
+): Promise<LiquidityResult | null> {
   try {
     // Step 1: Jupiter quote — existence + depth (Level 1)
     const jupiter: JupiterData | null = prefetchedQuote
@@ -103,7 +103,12 @@ export async function checkLiquidity(
           risk: dex.liquidity_rating === "SHALLOW" || dex.liquidity_rating === "NONE" ? "WARNING" : "SAFE",
         };
       }
-      return noLiquidity();
+      // DexScreener confirmed no pairs exist → genuine no-liquidity
+      if (dex && !dex.has_liquidity) {
+        return noLiquidity();
+      }
+      // Both sources failed → unknown, not confirmed absent
+      return null;
     }
 
     const rating = deriveRating(jupiter.priceImpactPct);
@@ -141,8 +146,8 @@ export async function checkLiquidity(
       risk,
     };
   } catch (err) {
-    logger.warn({ err, mintAddress }, "Jupiter liquidity check failed");
-    return noLiquidity();
+    logger.warn({ err, mintAddress }, "Liquidity check failed completely");
+    return null;
   }
 }
 
