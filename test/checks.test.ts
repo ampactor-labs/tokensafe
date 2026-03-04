@@ -49,7 +49,7 @@ vi.mock("../src/utils/response-signer.js", () => ({
 import { getConnection } from "../src/solana/rpc.js";
 import { getMint } from "@solana/spl-token";
 import { checkMintAccount } from "../src/analysis/checks/mint-authority.js";
-import { checkTopHolders, adjustForVaults } from "../src/analysis/checks/top-holders.js";
+import { checkTopHolders } from "../src/analysis/checks/top-holders.js";
 import { checkLiquidity } from "../src/analysis/checks/liquidity.js";
 import { checkMetadata } from "../src/analysis/checks/metadata.js";
 import { checkTokenAge } from "../src/analysis/checks/token-age.js";
@@ -470,13 +470,101 @@ describe("checkTopHolders", () => {
     globalThis.fetch = originalFetch;
   });
 
+  // Build a fake SPL token account buffer with the given owner pubkey bytes
+  function buildTokenAccountBuffer(ownerPubkey: PublicKey): string {
+    const buf = Buffer.alloc(165); // SPL token account size
+    // Bytes 0-31: mint (irrelevant for our test)
+    // Bytes 32-63: owner
+    ownerPubkey.toBuffer().copy(buf, 32);
+    return buf.toString("base64");
+  }
+
+  // A known on-curve (wallet) address
+  const WALLET_OWNER = new PublicKey("9yy87vYzU4NgL2jF8yoFFtrRY7YbaW9mbtD6yMKkBjrf");
+  // A known off-curve (PDA) address — derived deterministically
+  const PDA_OWNER = PublicKey.findProgramAddressSync(
+    [Buffer.from("protocol")],
+    new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+  )[0];
+
+  // A known DeFi program (Raydium AMM v4) for PDA whitelist tests
+  const KNOWN_PROGRAM = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
+  // An unknown program (not in known-programs registry)
+  const UNKNOWN_PROGRAM = "UnknownProg1111111111111111111111111111111";
+
   function mockRpcResponse(value: Array<{ address: string; amount: string }>) {
-    globalThis.fetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { value } }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+    // Chain: call 1 = getTokenLargestAccounts, call 2 = getMultipleAccounts (Phase 1),
+    // call 3 = getMultipleAccounts (Phase 2 — PDA program resolution, only if PDAs exist)
+    const ownersResponse = value.map((v) => ({
+      data: [buildTokenAccountBuffer(WALLET_OWNER), "base64"],
+    }));
+    // All owners are wallets (on-curve), so no Phase 2 call needed
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { value } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { value: ownersResponse } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+  }
+
+  function mockRpcWithOwners(
+    accounts: Array<{ address: string; amount: string }>,
+    owners: Array<{ pubkey: PublicKey } | null>,
+    pdaProgramOwners?: Map<string, string>,
+  ) {
+    const ownersResponse = owners.map((o) =>
+      o ? { data: [buildTokenAccountBuffer(o.pubkey), "base64"] } : null,
     );
+
+    // Phase 2: resolve PDA owner addresses → their owning program
+    // Collect unique off-curve owners
+    const pdaOwnerAddresses: string[] = [];
+    for (const o of owners) {
+      if (!o) continue;
+      const bytes = o.pubkey.toBytes();
+      if (!PublicKey.isOnCurve(bytes)) {
+        const addr = o.pubkey.toBase58();
+        if (!pdaOwnerAddresses.includes(addr)) pdaOwnerAddresses.push(addr);
+      }
+    }
+
+    const phase2Response = pdaOwnerAddresses.map((addr) => {
+      const program = pdaProgramOwners?.get(addr);
+      return program ? { owner: program } : { owner: "11111111111111111111111111111111" };
+    });
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { value: accounts } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { value: ownersResponse } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    // Only add Phase 2 mock if there are PDAs
+    if (pdaOwnerAddresses.length > 0) {
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ jsonrpc: "2.0", id: 3, result: { value: phase2Response } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    }
+
+    globalThis.fetch = fetchMock;
   }
 
   function mockRpcError(message: string) {
@@ -563,20 +651,24 @@ describe("checkTopHolders", () => {
     expect(result.holder_count_estimate).toBeNull();
   });
 
-  it("returns top_holders_detail with addresses and percentages", async () => {
+  it("returns top_holders_detail with addresses, percentages, owner and is_protocol_account", async () => {
     mockRpcResponse([
       { address: ADDR, amount: "300" },
       { address: ADDR, amount: "200" },
     ]);
     const result = await checkTopHolders(MINT, 1000n);
     expect(result.top_holders_detail).toHaveLength(2);
-    expect(result.top_holders_detail![0]).toEqual({
+    expect(result.top_holders_detail![0]).toMatchObject({
       address: ADDR,
       percentage: 30,
+      owner: WALLET_OWNER.toBase58(),
+      is_protocol_account: false,
     });
-    expect(result.top_holders_detail![1]).toEqual({
+    expect(result.top_holders_detail![1]).toMatchObject({
       address: ADDR,
       percentage: 20,
+      owner: WALLET_OWNER.toBase58(),
+      is_protocol_account: false,
     });
   });
 
@@ -604,6 +696,206 @@ describe("checkTopHolders", () => {
     expect(result.status).toBe("UNAVAILABLE");
     expect(result.risk).toBe("UNKNOWN");
     expect(result.note).toContain("RPC error");
+  });
+
+  // ── PDA-based protocol account detection ──────────────────────────
+
+  it("excludes PDA-owned accounts from concentration when owned by known program", async () => {
+    const ACCT_PDA = "PdaAcct111111111111111111111111111111111111";
+    const ACCT_WALLET = "WalAcct111111111111111111111111111111111111";
+    mockRpcWithOwners(
+      [
+        { address: ACCT_PDA, amount: "600" },   // 60% — PDA owned by known program
+        { address: ACCT_WALLET, amount: "200" }, // 20% — wallet
+      ],
+      [
+        { pubkey: PDA_OWNER },
+        { pubkey: WALLET_OWNER },
+      ],
+      new Map([[PDA_OWNER.toBase58(), KNOWN_PROGRAM]]),
+    );
+    const result = await checkTopHolders(MINT, 1000n);
+    // Scoring should exclude the 60% PDA (known program) → top1=20%, top10=20%
+    expect(result.top_1_percentage).toBe(20);
+    expect(result.top_10_percentage).toBe(20);
+    expect(result.risk).toBe("SAFE");
+    expect(result.note).toContain("PDA-owned");
+    // But detail still contains both
+    expect(result.top_holders_detail).toHaveLength(2);
+    expect(result.top_holders_detail![0].is_protocol_account).toBe(true);
+    expect(result.top_holders_detail![0].owner_program).toBe(KNOWN_PROGRAM);
+    expect(result.top_holders_detail![1].is_protocol_account).toBe(false);
+  });
+
+  it("enriches top_holders_detail with owner, owner_program and is_protocol_account", async () => {
+    const ACCT_A = "AcctAAAA1111111111111111111111111111111111";
+    mockRpcWithOwners(
+      [{ address: ACCT_A, amount: "500" }],
+      [{ pubkey: PDA_OWNER }],
+      new Map([[PDA_OWNER.toBase58(), KNOWN_PROGRAM]]),
+    );
+    const result = await checkTopHolders(MINT, 1000n);
+    expect(result.top_holders_detail![0].owner).toBe(PDA_OWNER.toBase58());
+    expect(result.top_holders_detail![0].owner_program).toBe(KNOWN_PROGRAM);
+    expect(result.top_holders_detail![0].is_protocol_account).toBe(true);
+  });
+
+  it("falls back to raw concentration when resolveOwners fails", async () => {
+    // First call succeeds (getTokenLargestAccounts), second fails (getMultipleAccounts)
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          jsonrpc: "2.0", id: 1,
+          result: { value: [{ address: ADDR, amount: "600" }, { address: ADDR, amount: "100" }] },
+        }), { status: 200, headers: { "Content-Type": "application/json" } }),
+      )
+      .mockRejectedValueOnce(new Error("RPC timeout"));
+    const result = await checkTopHolders(MINT, 1000n);
+    // Should still compute raw concentration (no crash)
+    expect(result.status).toBe("OK");
+    expect(result.top_1_percentage).toBe(60);
+    expect(result.top_10_percentage).toBe(70);
+    expect(result.note).toBeNull(); // no adjustment note
+    // owner/is_protocol_account default to null/false when no ownerMap
+    expect(result.top_holders_detail![0].owner).toBeNull();
+    expect(result.top_holders_detail![0].is_protocol_account).toBe(false);
+  });
+
+  it("uses raw concentration when all holders are known-program PDAs", async () => {
+    const ACCT_A = "AcctAAAA1111111111111111111111111111111111";
+    const ACCT_B = "AcctBBBB1111111111111111111111111111111111";
+    mockRpcWithOwners(
+      [
+        { address: ACCT_A, amount: "600" },
+        { address: ACCT_B, amount: "300" },
+      ],
+      [
+        { pubkey: PDA_OWNER },
+        { pubkey: PDA_OWNER },
+      ],
+      new Map([[PDA_OWNER.toBase58(), KNOWN_PROGRAM]]),
+    );
+    const result = await checkTopHolders(MINT, 1000n);
+    // All holders are known-program PDAs → raw concentration preserved, no false 0%
+    expect(result.top_1_percentage).toBe(60);
+    expect(result.top_10_percentage).toBe(90);
+    expect(result.note).toBeNull();
+  });
+
+  it("computes correct adjusted percentages with mixed PDA/wallet holders", async () => {
+    const ACCT_PDA1 = "Pda1Acct1111111111111111111111111111111111";
+    const ACCT_PDA2 = "Pda2Acct1111111111111111111111111111111111";
+    const ACCT_WAL1 = "Wal1Acct1111111111111111111111111111111111";
+    const ACCT_WAL2 = "Wal2Acct1111111111111111111111111111111111";
+    mockRpcWithOwners(
+      [
+        { address: ACCT_PDA1, amount: "400" }, // 40% PDA (known program)
+        { address: ACCT_WAL1, amount: "300" }, // 30% wallet
+        { address: ACCT_PDA2, amount: "200" }, // 20% PDA (known program)
+        { address: ACCT_WAL2, amount: "50" },  // 5% wallet
+      ],
+      [
+        { pubkey: PDA_OWNER },
+        { pubkey: WALLET_OWNER },
+        { pubkey: PDA_OWNER },
+        { pubkey: WALLET_OWNER },
+      ],
+      new Map([[PDA_OWNER.toBase58(), KNOWN_PROGRAM]]),
+    );
+    const result = await checkTopHolders(MINT, 1000n);
+    // Wallet-only: wal1=30%, wal2=5% → top1=30%, top10=35%
+    expect(result.top_1_percentage).toBe(30);
+    expect(result.top_10_percentage).toBe(35);
+    expect(result.risk).toBe("HIGH"); // top1 > 20%
+    expect(result.note).toContain("2 PDA-owned accounts");
+  });
+
+  it("treats null getMultipleAccounts entries as wallets (conservative)", async () => {
+    const ACCT_A = "AcctAAAA1111111111111111111111111111111111";
+    const ACCT_B = "AcctBBBB1111111111111111111111111111111111";
+    mockRpcWithOwners(
+      [
+        { address: ACCT_A, amount: "600" },
+        { address: ACCT_B, amount: "200" },
+      ],
+      [
+        null,                    // null → treated as wallet
+        { pubkey: PDA_OWNER },   // PDA owned by known program
+      ],
+      new Map([[PDA_OWNER.toBase58(), KNOWN_PROGRAM]]),
+    );
+    const result = await checkTopHolders(MINT, 1000n);
+    // ACCT_A: null owner → wallet (conservative), ACCT_B: known-program PDA excluded
+    // Wallet-only: ACCT_A=60% → top1=60%, top10=60%
+    expect(result.top_1_percentage).toBe(60);
+    expect(result.top_holders_detail![0].owner).toBeNull();
+    expect(result.top_holders_detail![0].is_protocol_account).toBe(false);
+    expect(result.top_holders_detail![1].is_protocol_account).toBe(true);
+  });
+
+  it("counts PDA owned by unknown program as wallet concentration", async () => {
+    const ACCT_PDA = "PdaAcct111111111111111111111111111111111111";
+    const ACCT_WALLET = "WalAcct111111111111111111111111111111111111";
+    mockRpcWithOwners(
+      [
+        { address: ACCT_PDA, amount: "600" },   // 60% — PDA owned by UNKNOWN program
+        { address: ACCT_WALLET, amount: "200" }, // 20% — wallet
+      ],
+      [
+        { pubkey: PDA_OWNER },
+        { pubkey: WALLET_OWNER },
+      ],
+      new Map([[PDA_OWNER.toBase58(), UNKNOWN_PROGRAM]]),  // unknown program
+    );
+    const result = await checkTopHolders(MINT, 1000n);
+    // PDA owned by unknown program → NOT excluded → counted as wallet concentration
+    expect(result.top_1_percentage).toBe(60);
+    expect(result.top_10_percentage).toBe(80);
+    expect(result.top_holders_detail![0].is_protocol_account).toBe(false);
+    expect(result.top_holders_detail![0].owner_program).toBe(UNKNOWN_PROGRAM);
+    expect(result.top_holders_detail![1].is_protocol_account).toBe(false);
+  });
+
+  it("treats PDAs as wallets when PDA owner resolution fails", async () => {
+    const ACCT_PDA = "PdaAcct111111111111111111111111111111111111";
+    const ACCT_WALLET = "WalAcct111111111111111111111111111111111111";
+    // Phase 1 succeeds, Phase 2 (PDA program resolution) fails
+    const ownersResponse = [
+      { data: [buildTokenAccountBuffer(PDA_OWNER), "base64"] },
+      { data: [buildTokenAccountBuffer(WALLET_OWNER), "base64"] },
+    ];
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          jsonrpc: "2.0", id: 1,
+          result: { value: [
+            { address: ACCT_PDA, amount: "600" },
+            { address: ACCT_WALLET, amount: "200" },
+          ] },
+        }), { status: 200, headers: { "Content-Type": "application/json" } }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { value: ownersResponse } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockRejectedValueOnce(new Error("Phase 2 RPC timeout")); // Phase 2 fails
+
+    const result = await checkTopHolders(MINT, 1000n);
+    // Phase 2 failure → ownerProgram=null → PDA not excluded (conservative)
+    expect(result.top_1_percentage).toBe(60);
+    expect(result.top_10_percentage).toBe(80);
+    expect(result.top_holders_detail![0].is_protocol_account).toBe(false);
+    expect(result.top_holders_detail![0].owner_program).toBeNull();
+  });
+
+  it("handles zero supply with owner resolution gracefully", async () => {
+    mockRpcResponse([]);
+    const result = await checkTopHolders(MINT, 0n);
+    expect(result.top_10_percentage).toBe(0);
+    expect(result.holder_count_estimate).toBe(0);
+    expect(result.risk).toBe("SAFE");
   });
 });
 
@@ -1205,121 +1497,3 @@ describe("checkTokenLite", () => {
   });
 });
 
-// ════════════════════════════════════════════════════════════════════
-// 9. adjustForVaults — AMM vault exclusion from concentration
-// ════════════════════════════════════════════════════════════════════
-
-describe("adjustForVaults", () => {
-  const VAULT_A = "VaultA1111111111111111111111111111111111111";
-  const VAULT_B = "VaultB1111111111111111111111111111111111111";
-  const HOLDER_1 = "Holder111111111111111111111111111111111111";
-  const HOLDER_2 = "Holder222222222222222222222222222222222222";
-
-  function makeHoldersFromDetail(detail: Array<{ address: string; percentage: number }>): import("../src/analysis/checks/top-holders.js").TopHoldersResult {
-    const top10 = detail.reduce((s, h) => s + h.percentage, 0);
-    const top1 = detail.length > 0 ? detail[0].percentage : 0;
-    return {
-      status: "OK",
-      top_10_percentage: top10,
-      top_1_percentage: top1,
-      holder_count_estimate: null,
-      top_holders_detail: detail,
-      note: null,
-      risk: top10 > 50 && top1 > 20 ? "CRITICAL" : top10 > 50 || top1 > 20 ? "HIGH" : "SAFE",
-    };
-  }
-
-  it("removes vault address from top 1 and drops concentration", () => {
-    const holders = makeHoldersFromDetail([
-      { address: VAULT_A, percentage: 60 },
-      { address: HOLDER_1, percentage: 15 },
-      { address: HOLDER_2, percentage: 5 },
-    ]);
-    const result = adjustForVaults(holders, new Set([VAULT_A]));
-    expect(result.top_1_percentage).toBe(15);
-    expect(result.top_10_percentage).toBe(20);
-    expect(result.risk).toBe("SAFE");
-    expect(result.note).toContain("1 vault account");
-  });
-
-  it("returns unchanged holders when vault address is not in list", () => {
-    const holders = makeHoldersFromDetail([
-      { address: HOLDER_1, percentage: 60 },
-      { address: HOLDER_2, percentage: 15 },
-    ]);
-    const result = adjustForVaults(holders, new Set([VAULT_A]));
-    expect(result).toBe(holders); // same reference, not modified
-  });
-
-  it("returns unchanged holders with empty vault set", () => {
-    const holders = makeHoldersFromDetail([
-      { address: HOLDER_1, percentage: 60 },
-    ]);
-    const result = adjustForVaults(holders, new Set());
-    expect(result).toBe(holders);
-  });
-
-  it("excludes multiple vaults", () => {
-    const holders = makeHoldersFromDetail([
-      { address: VAULT_A, percentage: 40 },
-      { address: VAULT_B, percentage: 30 },
-      { address: HOLDER_1, percentage: 10 },
-      { address: HOLDER_2, percentage: 5 },
-    ]);
-    const result = adjustForVaults(holders, new Set([VAULT_A, VAULT_B]));
-    expect(result.top_1_percentage).toBe(10);
-    expect(result.top_10_percentage).toBe(15);
-    expect(result.risk).toBe("SAFE");
-    expect(result.note).toContain("2 vault accounts");
-  });
-
-  it("returns UNAVAILABLE holders unchanged", () => {
-    const holders: import("../src/analysis/checks/top-holders.js").TopHoldersResult = {
-      status: "UNAVAILABLE",
-      top_10_percentage: 0,
-      top_1_percentage: 0,
-      holder_count_estimate: null,
-      top_holders_detail: null,
-      note: "RPC error",
-      risk: "UNKNOWN",
-    };
-    const result = adjustForVaults(holders, new Set([VAULT_A]));
-    expect(result).toBe(holders);
-  });
-
-  it("preserves risk classification after vault removal", () => {
-    // After removing vault, top1 = 25% → HIGH (>20)
-    const holders = makeHoldersFromDetail([
-      { address: VAULT_A, percentage: 50 },
-      { address: HOLDER_1, percentage: 25 },
-      { address: HOLDER_2, percentage: 10 },
-    ]);
-    const result = adjustForVaults(holders, new Set([VAULT_A]));
-    expect(result.top_1_percentage).toBe(25);
-    expect(result.risk).toBe("HIGH");
-  });
-
-  it("returns original when ALL holders are vaults (no false safety)", () => {
-    const holders = makeHoldersFromDetail([
-      { address: VAULT_A, percentage: 60 },
-      { address: VAULT_B, percentage: 30 },
-    ]);
-    const result = adjustForVaults(holders, new Set([VAULT_A, VAULT_B]));
-    // Should return original — don't produce fake 0% concentration
-    expect(result).toBe(holders);
-  });
-
-  it("returns original when top_holders_detail is null", () => {
-    const holders: import("../src/analysis/checks/top-holders.js").TopHoldersResult = {
-      status: "OK",
-      top_10_percentage: 50,
-      top_1_percentage: 30,
-      holder_count_estimate: null,
-      top_holders_detail: null,
-      note: null,
-      risk: "CRITICAL",
-    };
-    const result = adjustForVaults(holders, new Set([VAULT_A]));
-    expect(result).toBe(holders);
-  });
-});

@@ -41,23 +41,9 @@ const BASE_VAULT_OFFSET = 336;
 const QUOTE_VAULT_OFFSET = 368;
 const LP_MINT_OFFSET = 464;
 
-/** Known LP locker program addresses → human-readable name */
-export const KNOWN_LOCKERS = new Map<string, string>([
-  // Streamflow
-  ["strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m", "Streamflow"],
-  // UNCX AMM V4
-  ["UNCX77nZrA3TdAxMEggqG18xxpgiNGT6iqyynPwpoxN", "UNCX"],
-  ["GsSCS3vPWrtJ5Y9aEVVT65fmrex5P5RGHXdZvsdbWgfo", "UNCX"],
-  ["DAtFFs2mhQFvrgNLA29vEDeTLLN8vHknAaAhdLEc4SQH", "UNCX"],
-  // UNCX CPMM
-  ["UNCXdvMRxvz91g3HqFmpZ5NgmL77UH4QRM4NfeL4mQB", "UNCX"],
-  ["FEmGEWdxCBSJ1QFKeX5B6k7VTDPwNU3ZLdfgJkvGYrH5", "UNCX"],
-  // UNCX CLMM
-  ["UNCXrB8cZXnmtYM1aSo1Wx3pQaeSZYuF2jCTesXvECs", "UNCX"],
-  ["GAYWATob4bqCj3fhVm8ZxoMSqUW2fb6e6SBQ7kk5qyps", "UNCX"],
-  // UNCX general
-  ["BzKincxjgFQjj4FmhaWrwHES1ekBGN73YesA7JwJJo7X", "UNCX"],
-]);
+import { KNOWN_LOCKERS } from "./known-programs.js";
+// Re-export for backwards compatibility (tests import from liquidity.ts)
+export { KNOWN_LOCKERS };
 
 // ---------------------------------------------------------------------------
 // Internal types

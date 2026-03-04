@@ -1,7 +1,7 @@
 [
   {
     "name": "solana_token_safety_check",
-    "description": "Quick safety screening for any Solana SPL token. Returns: risk score (0-100), risk level (LOW/MODERATE/HIGH/CRITICAL/EXTREME), human-readable summary, token name/symbol, whether authorities are renounced, liquidity rating (DEEP/MODERATE/SHALLOW/NONE), top-10 holder concentration percentage, honeypot status (can_sell), token age, Token-2022 extension risks, and degradation status. This is a FREE lite check — for full details (individual authority addresses, holder breakdown with addresses, LP lock status and locker identity, honeypot sell tax, field-level change detection), use the x402 paid endpoint at GET /v1/check?mint=<address> ($0.008 USDC per request).",
+    "description": "Quick safety screening for any Solana SPL token. Returns: risk score (0-100), risk level (LOW/MODERATE/HIGH/CRITICAL/EXTREME), human-readable summary, token name/symbol, whether authorities are renounced, liquidity rating (DEEP/MODERATE/SHALLOW/NONE), top-10 holder concentration percentage (PDA-adjusted — only known DeFi protocol accounts excluded via whitelist), honeypot status (can_sell), token age, Token-2022 extension risks, and degradation status. This is a FREE lite check — for full details (individual authority addresses, top holder breakdown with addresses, wallet/PDA classification, owner program identification, LP lock status and locker identity, honeypot sell tax, field-level change detection), use the x402 paid endpoint at GET /v1/check?mint=<address> ($0.008 USDC per request).",
     "inputSchema": {
       "type": "object",
       "properties": {
