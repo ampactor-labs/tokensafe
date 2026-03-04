@@ -133,9 +133,9 @@ async function resolveOwners(
           jsonrpc: "2.0",
           id: 3,
           method: "getMultipleAccounts",
-          params: [pdaOwners, { encoding: "base64" }],
+          params: [pdaOwners, { encoding: "base64", dataSlice: { offset: 0, length: 0 } }],
         }),
-        signal: AbortSignal.timeout(TOP_HOLDERS_TIMEOUT_MS),
+        signal: AbortSignal.timeout(5_000),
       });
       if (!res2.ok) throw new Error(`RPC HTTP ${res2.status}`);
       const json2 = (await res2.json()) as {
@@ -208,7 +208,7 @@ export async function checkTopHolders(
   // Resolve owners to classify PDA (protocol) vs wallet accounts
   let ownerMap: Map<string, OwnerInfo> | null = null;
   try {
-    const addresses = accounts.slice(0, 20).map((a) => a.address);
+    const addresses = accounts.slice(0, 10).map((a) => a.address);
     ownerMap = await resolveOwners(addresses);
   } catch (err) {
     logger.warn(
