@@ -19,7 +19,7 @@
 npm install && npm test && npx tsc --noEmit
 ```
 
-369 tests pass (73 risk-score + 56 checks + 27 delta + 20 liquidity + 114 integration + 11 audit-report + 10 webhook + 10 jupiter + 5 response-signer + 18 api-keys + 16 policy-engine + 9 audit-db). Tests mock x402 and RPC — no network or wallet needed.
+420 tests pass (84 risk-score + 66 checks + 27 delta + 23 liquidity + 132 integration + 11 audit-report + 10 webhook + 10 jupiter + 5 response-signer + 18 api-keys + 16 policy-engine + 9 audit-db). Tests mock x402 and RPC — no network or wallet needed.
 
 ---
 
@@ -342,7 +342,7 @@ Submit manually at [x402scan](https://x402scan.com) for inclusion. No automatic 
 | `npm run dev` | `tsx watch src/index.ts` | Dev server with hot reload + pino-pretty logs |
 | `npm run build` | `tsc` | Compile to `dist/` |
 | `npm start` | `node dist/index.js` | Production server |
-| `npm test` | `vitest run` | 369 tests across 12 files (mocked, no network) |
+| `npm test` | `vitest run` | 420 tests across 12 files (mocked, no network) |
 | `npm run test:smoke` | `tsx scripts/smoke.ts` | Smoke test against running server |
 | `npm run test:x402` | `tsx scripts/x402-client.ts` | x402 paid request test |
 | `npm run wallet:generate` | `tsx scripts/generate-test-wallet.ts` | Generate Solana test keypair |

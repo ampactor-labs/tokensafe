@@ -43,8 +43,8 @@ function makeQuote(overrides: Partial<JupiterQuote> = {}): JupiterQuote {
 // Helper: build a 752-byte Raydium AMM v4 pool account
 function makePoolAccount(lpMintPubkey: PublicKey) {
   const data = Buffer.alloc(752);
-  // Write LP mint at offset 432
-  lpMintPubkey.toBuffer().copy(data, 432);
+  // Write LP mint at offset 464 (verified against SOL/USDC pool)
+  lpMintPubkey.toBuffer().copy(data, 464);
   return {
     owner: new PublicKey(RAYDIUM_AMM_V4),
     data,

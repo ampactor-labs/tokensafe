@@ -5,6 +5,7 @@ import {
 } from "./checks/mint-authority.js";
 import {
   checkTopHolders,
+  adjustForVaults,
   type TopHoldersResult,
 } from "./checks/top-holders.js";
 import { checkLiquidity, type LiquidityResult } from "./checks/liquidity.js";
@@ -344,6 +345,19 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
   const liquidity: (LiquidityResult & { status: "OK" | "UNAVAILABLE" }) | null =
     liquidityRaw ? { ...liquidityRaw, status: "OK" } : null;
 
+  // Adjust holders for AMM vault exclusion — vault token accounts hold liquidity, not whale concentration
+  let adjustedHolders = holders;
+  if (
+    liquidity?.pool_vault_addresses?.length &&
+    holders.status === "OK" &&
+    holders.top_holders_detail
+  ) {
+    adjustedHolders = adjustForVaults(
+      holders,
+      new Set(liquidity.pool_vault_addresses),
+    );
+  }
+
   // Token-2022 embedded metadata fallback (pump.fun tokens use this instead of Metaplex)
   const tokenMetadataExt = mintData.extensions.find(
     (e) => e.name === "TokenMetadata",
@@ -386,7 +400,7 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
 
   const riskInput = {
     mint: mintData,
-    holders,
+    holders: adjustedHolders,
     liquidity,
     metadata: effectiveMetadata,
     tokenAge,
@@ -422,7 +436,7 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
         total: mintData.supplyRaw.toString(),
         decimals: mintData.decimals,
       },
-      top_holders: holders,
+      top_holders: adjustedHolders,
       liquidity,
       metadata: effectiveMetadata
         ? {

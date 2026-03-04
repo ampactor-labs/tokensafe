@@ -57,6 +57,7 @@ function makeLiquidity(
     lp_lock_expiry: null,
     lp_mint: null,
     lp_locker: null,
+    pool_vault_addresses: null,
     risk: "SAFE",
     ...overrides,
   };

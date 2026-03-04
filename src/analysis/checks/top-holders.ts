@@ -79,6 +79,62 @@ export async function checkTopHolders(
   return computeConcentration(accounts, totalSupplyRaw, null);
 }
 
+/**
+ * Adjusts holder concentration by excluding known AMM vault token accounts.
+ * Vaults hold tokens as liquidity, not as whale concentration.
+ */
+export function adjustForVaults(
+  holders: TopHoldersResult,
+  vaultAddresses: Set<string>,
+): TopHoldersResult {
+  if (
+    holders.status !== "OK" ||
+    !holders.top_holders_detail ||
+    vaultAddresses.size === 0
+  ) {
+    return holders;
+  }
+
+  const filtered = holders.top_holders_detail.filter(
+    (h) => !vaultAddresses.has(h.address),
+  );
+
+  // Nothing was removed
+  if (filtered.length === holders.top_holders_detail.length) {
+    return holders;
+  }
+
+  // All holders were vaults — return original (scorer uses raw percentages)
+  if (filtered.length === 0) {
+    return holders;
+  }
+
+  const removedCount =
+    holders.top_holders_detail.length - filtered.length;
+
+  // Recompute concentration from filtered list (sum of pre-rounded percentages)
+  const top10 = filtered.slice(0, 10);
+  const top10Pct = top10.reduce((sum, h) => sum + h.percentage, 0);
+  const top1Pct = top10[0].percentage;
+
+  let risk: TopHoldersResult["risk"] = "SAFE";
+  if (top10Pct > 50 && top1Pct > 20) {
+    risk = "CRITICAL";
+  } else if (top10Pct > 50 || top1Pct > 20) {
+    risk = "HIGH";
+  }
+
+  return {
+    status: "OK",
+    top_10_percentage: Math.round(top10Pct * 100) / 100,
+    top_1_percentage: Math.round(top1Pct * 100) / 100,
+    holder_count_estimate: holders.holder_count_estimate,
+    top_holders_detail: filtered,
+    note: `Adjusted for AMM vault exclusion (${removedCount} vault account${removedCount > 1 ? "s" : ""} removed)`,
+    risk,
+  };
+}
+
 function unavailableHolders(note: string): TopHoldersResult {
   return {
     status: "UNAVAILABLE",

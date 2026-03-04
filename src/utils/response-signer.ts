@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { logger } from "./logger.js";
 
 /**
  * Ed25519 response signing for audit verifiability.
@@ -30,13 +31,13 @@ const { privateKey, publicKey } = (() => {
       const pub = crypto.createPublicKey(priv);
       return { privateKey: priv, publicKey: pub };
     } catch (err) {
-      console.warn(
-        "Failed to load RESPONSE_SIGNING_KEY, using ephemeral key:",
-        err instanceof Error ? err.message : String(err),
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "Failed to load RESPONSE_SIGNING_KEY, using ephemeral key",
       );
     }
   } else {
-    console.warn(
+    logger.warn(
       "RESPONSE_SIGNING_KEY not set — using ephemeral Ed25519 key (changes on restart, attestations unverifiable across deploys)",
     );
   }
