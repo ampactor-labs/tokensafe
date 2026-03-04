@@ -92,6 +92,8 @@ function makeResult(overrides?: Partial<TokenCheckResult>): CheckTokenResponse {
     changes: null,
     alerts: [],
     score_breakdown: {},
+    data_confidence: "complete",
+    degraded_note: null,
     response_signature: "deadbeef",
     signer_pubkey: "cafebabe",
     ...overrides,
@@ -124,6 +126,9 @@ function makeLiteResult(
     risk_score_delta: null,
     previous_risk_score: null,
     previous_risk_level: null,
+    data_confidence: "complete",
+    degraded_note: null,
+    uncertainty_penalties: null,
     full_report: {
       url: `/v1/check?mint=${WSOL}`,
       price_usd: "$0.008",
@@ -546,6 +551,111 @@ describe("GET /v1/check/lite enrichment", () => {
     );
     const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
     expect(res.body.top_10_concentration).toBeNull();
+  });
+});
+
+describe("data_confidence + X-Data-Confidence header", () => {
+  it("lite returns data_confidence=complete and header when not degraded", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult());
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data_confidence).toBe("complete");
+    expect(res.body.degraded_note).toBeNull();
+    expect(res.body.uncertainty_penalties).toBeNull();
+    expect(res.headers["x-data-confidence"]).toBe("complete");
+  });
+
+  it("lite returns data_confidence=partial with degraded_note when degraded", async () => {
+    mockCheckTokenLite.mockResolvedValue(
+      makeLiteResult({
+        degraded: true,
+        degraded_checks: ["top_holders", "liquidity"],
+        data_confidence: "partial",
+        degraded_note:
+          "Warning: 2 of 6 checks failed (top_holders, liquidity). Score includes uncertainty penalties and may not reflect true risk. Retry or use full /v1/check for best accuracy.",
+        uncertainty_penalties: { uncertainty_top_holders: 10, uncertainty_liquidity: 10 },
+      }),
+    );
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data_confidence).toBe("partial");
+    expect(res.body.degraded_note).toContain("2 of 6 checks failed");
+    expect(res.body.uncertainty_penalties).toEqual({
+      uncertainty_top_holders: 10,
+      uncertainty_liquidity: 10,
+    });
+    expect(res.headers["x-data-confidence"]).toBe("partial");
+  });
+
+  it("paid check returns data_confidence and header", async () => {
+    mockCheckToken.mockResolvedValue(makeResult());
+    const res = await request(app).get(`/v1/check?mint=${WSOL}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data_confidence).toBe("complete");
+    expect(res.body.degraded_note).toBeNull();
+    expect(res.headers["x-data-confidence"]).toBe("complete");
+  });
+
+  it("paid check returns data_confidence=partial when degraded", async () => {
+    mockCheckToken.mockResolvedValue(
+      makeResult({
+        degraded: true,
+        degraded_checks: ["honeypot"],
+        data_confidence: "partial",
+        degraded_note:
+          "Warning: 1 of 6 checks failed (honeypot). Score includes uncertainty penalties and may not reflect true risk. Retry or use full /v1/check for best accuracy.",
+        score_breakdown: { uncertainty_honeypot: 10 },
+      }),
+    );
+    const res = await request(app).get(`/v1/check?mint=${WSOL}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data_confidence).toBe("partial");
+    expect(res.body.degraded_note).toContain("honeypot");
+    expect(res.headers["x-data-confidence"]).toBe("partial");
+  });
+
+  it("decide endpoint sets X-Data-Confidence header", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult());
+    const res = await request(app).get(`/v1/decide?mint=${WSOL}`);
+    expect(res.status).toBe(200);
+    expect(res.headers["x-data-confidence"]).toBe("complete");
+  });
+
+  it("decide endpoint sets X-Data-Confidence=partial when degraded", async () => {
+    mockCheckTokenLite.mockResolvedValue(
+      makeLiteResult({
+        degraded: true,
+        degraded_checks: ["top_holders"],
+        data_confidence: "partial",
+        degraded_note: "Warning: 1 of 6 checks failed (top_holders)...",
+      }),
+    );
+    const res = await request(app).get(`/v1/decide?mint=${WSOL}`);
+    expect(res.status).toBe(200);
+    expect(res.headers["x-data-confidence"]).toBe("partial");
+  });
+
+  it("lite uncertainty_penalties is null when not degraded", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult());
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.body.uncertainty_penalties).toBeNull();
+  });
+
+  it("lite uncertainty_penalties shows penalty breakdown when degraded", async () => {
+    mockCheckTokenLite.mockResolvedValue(
+      makeLiteResult({
+        degraded: true,
+        degraded_checks: ["metadata", "token_age"],
+        data_confidence: "partial",
+        degraded_note: "Warning: 2 of 6 checks failed...",
+        uncertainty_penalties: { uncertainty_metadata: 3, uncertainty_token_age: 5 },
+      }),
+    );
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.body.uncertainty_penalties).toEqual({
+      uncertainty_metadata: 3,
+      uncertainty_token_age: 5,
+    });
   });
 });
 
@@ -1591,7 +1701,7 @@ describe("Batch endpoints", () => {
 });
 
 describe("degraded result caching (unit)", () => {
-  it("setCached stores degraded results with short TTL", async () => {
+  it("setCached skips degraded results (never cached)", async () => {
     // Test the real cache module directly (not mocked)
     const cache = await import("../src/utils/cache.js");
     cache.clearCache();
@@ -1605,9 +1715,7 @@ describe("degraded result caching (unit)", () => {
 
     cache.setCached(WSOL, degradedResult);
     const cached = cache.getCached(WSOL);
-    expect(cached).toBeDefined();
-    expect(cached!.degraded).toBe(true);
-    expect(cached!.risk_score).toBe(25);
+    expect(cached).toBeUndefined(); // Degraded results are never cached
 
     cache.clearCache();
   });

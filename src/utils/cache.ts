@@ -26,13 +26,8 @@ export function getCached(mint: string): TokenCheckResult | undefined {
   return result;
 }
 
-const DEGRADED_TTL_MS = 60_000; // 1 minute — allows RPC recovery while preventing score flip-flops
-
 export function setCached(mint: string, result: TokenCheckResult): void {
-  if (result.degraded) {
-    cache.set(mint, result, { ttl: DEGRADED_TTL_MS });
-    return;
-  }
+  if (result.degraded) return; // Never cache degraded — force fresh retry
   cache.set(mint, result);
 }
 

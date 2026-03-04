@@ -259,6 +259,7 @@ app.get("/v1/check/lite", liteRateLimiter, async (req, res, next) => {
     const { result, fromCache } = await checkTokenLite(mint, baseUrl);
     tokenChecksTotal.labels("lite").inc();
     res.setHeader("X-Cache", fromCache ? "HIT" : "MISS");
+    res.setHeader("X-Data-Confidence", result.data_confidence);
     res.setHeader(
       "Cache-Control",
       "public, max-age=300, stale-while-revalidate=60",
@@ -292,6 +293,7 @@ app.get("/v1/decide", liteRateLimiter, async (req, res, next) => {
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const { result, fromCache } = await checkTokenLite(mint, baseUrl);
     res.setHeader("X-Cache", fromCache ? "HIT" : "MISS");
+    res.setHeader("X-Data-Confidence", result.data_confidence);
     res.setHeader(
       "Cache-Control",
       "public, max-age=300, stale-while-revalidate=60",
@@ -1140,6 +1142,7 @@ app.get("/v1/check", async (req, res, next) => {
     const { result, fromCache } = await checkToken(mint);
     tokenChecksTotal.labels(req.apiKeyRecord ? "api_key" : "x402").inc();
     res.setHeader("X-Cache", fromCache ? "HIT" : "MISS");
+    res.setHeader("X-Data-Confidence", result.data_confidence);
     res.setHeader("Cache-Control", "private, no-store");
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.json(result);
