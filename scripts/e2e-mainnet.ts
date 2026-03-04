@@ -199,12 +199,22 @@ async function main() {
     assert(body.has_liquidity === true, "wSOL missing liquidity");
     assert(typeof body.liquidity_rating === "string", "missing liquidity_rating");
     assert(body.top_10_concentration === null || typeof body.top_10_concentration === "number", "bad top_10_concentration type");
+    // Data confidence fields
+    assert(body.data_confidence === "complete" || body.data_confidence === "partial", `bad data_confidence: ${body.data_confidence}`);
+    assert(body.degraded_note === null || typeof body.degraded_note === "string", "bad degraded_note type");
+    if (body.data_confidence === "complete") {
+      assert(body.degraded_note === null, "degraded_note should be null when complete");
+      assert(body.uncertainty_penalties === null, "uncertainty_penalties should be null when complete");
+    }
+    // X-Data-Confidence header
+    const confidence = res.headers.get("x-data-confidence");
+    assert(confidence === body.data_confidence, `X-Data-Confidence header (${confidence}) != body (${body.data_confidence})`);
     // Paid-only fields MUST be absent
     assert(body.checks === undefined, "lite leaks checks");
     assert(body.response_signature === undefined, "lite leaks response_signature");
     assert(body.score_breakdown === undefined, "lite leaks score_breakdown");
     assert(body.rpc_slot === undefined, "lite leaks rpc_slot");
-    log(`risk=${body.risk_score} (${body.risk_level}) name=${body.name}`);
+    log(`risk=${body.risk_score} (${body.risk_level}) confidence=${body.data_confidence} name=${body.name}`);
   });
 
   await sleep(3000);
@@ -269,9 +279,11 @@ async function main() {
   await check("GET /v1/decide TRUMP threshold=30 → RISKY", async () => {
     const res = await fetch(`${BASE}/v1/decide?mint=${MINTS.TRUMP}&threshold=30`);
     assert(res.status === 200, `expected 200, got ${res.status}`);
+    const decideConfidence = res.headers.get("x-data-confidence");
+    assert(decideConfidence === "complete" || decideConfidence === "partial", `missing/bad X-Data-Confidence on decide: ${decideConfidence}`);
     const body = await res.json() as any;
     assert(body.decision === "RISKY" || body.decision === "UNKNOWN", `expected RISKY|UNKNOWN for TRUMP, got ${body.decision}`);
-    log(`decision=${body.decision} risk=${body.risk_score} threshold=${body.threshold_used}`);
+    log(`decision=${body.decision} risk=${body.risk_score} threshold=${body.threshold_used} confidence=${decideConfidence}`);
   });
 
   await check("GET /v1/decide wSOL → SAFE or UNKNOWN (if degraded)", async () => {
@@ -477,6 +489,10 @@ async function main() {
     assert(typeof body.response_signature === "string", "missing response_signature");
     assert(typeof body.score_breakdown === "object", "missing score_breakdown");
     assert(body.signer_pubkey === signerPubkey!, `signer_pubkey mismatch: health=${signerPubkey!.slice(0, 8)} check=${body.signer_pubkey?.slice(0, 8)}`);
+    // Data confidence
+    assert(body.data_confidence === "complete" || body.data_confidence === "partial", `bad data_confidence: ${body.data_confidence}`);
+    const checkConfidence = res.headers.get("x-data-confidence");
+    assert(checkConfidence === body.data_confidence, `X-Data-Confidence header mismatch`);
     // Verify LP lock detection works (LP mint offset fix: 432→464)
     const liq = body.checks.liquidity;
     if (liq?.primary_pool?.toLowerCase().includes("raydium")) {

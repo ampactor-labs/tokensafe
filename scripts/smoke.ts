@@ -339,6 +339,20 @@ async function main() {
       typeof body.token_age_hours === "number" || body.token_age_hours === null,
       "token_age_hours: expected number|null",
     );
+    // Data confidence fields
+    assert(
+      body.data_confidence === "complete" || body.data_confidence === "partial",
+      `bad data_confidence: ${body.data_confidence}`,
+    );
+    assert(
+      body.degraded_note === null || typeof body.degraded_note === "string",
+      "bad degraded_note type",
+    );
+    const confidence = res.headers.get("x-data-confidence");
+    assert(
+      confidence === "complete" || confidence === "partial",
+      `bad X-Data-Confidence header: ${confidence}`,
+    );
     // Paywall integrity — no paid-only fields
     assert(!body.checks, "lite leaks checks");
     assert(body.changes === undefined, "lite leaks changes");

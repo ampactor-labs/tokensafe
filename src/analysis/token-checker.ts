@@ -91,6 +91,8 @@ export interface TokenCheckResult {
   response_signature: string;
   signer_pubkey: string;
   score_breakdown: Record<string, number>;
+  data_confidence: "complete" | "partial";
+  degraded_note: string | null;
   changes: ChangeReport | null;
   alerts: MonitorAlert[];
 }
@@ -124,6 +126,9 @@ export interface TokenCheckLiteResult {
   risk_score_delta: number | null;
   previous_risk_score: number | null;
   previous_risk_level: string | null;
+  data_confidence: "complete" | "partial";
+  degraded_note: string | null;
+  uncertainty_penalties: Record<string, number> | null;
   full_report: FullReportCTA;
 }
 
@@ -237,6 +242,15 @@ export async function checkTokenLite(
       risk_score_delta: result.changes?.risk_score_delta ?? null,
       previous_risk_score: result.changes?.previous_risk_score ?? null,
       previous_risk_level: result.changes?.previous_risk_level ?? null,
+      data_confidence: result.data_confidence,
+      degraded_note: result.degraded_note,
+      uncertainty_penalties: result.degraded
+        ? Object.fromEntries(
+            Object.entries(result.score_breakdown).filter(([k]) =>
+              k.startsWith("uncertainty_"),
+            ),
+          )
+        : null,
       full_report: {
         url: `${baseUrl || ""}/v1/check?mint=${mintAddress}`,
         price_usd: "$0.008",
@@ -392,6 +406,11 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
 
   const checked_at = new Date().toISOString();
 
+  const dataConfidence: "complete" | "partial" = degraded ? "partial" : "complete";
+  const degradedNote = degraded
+    ? `Warning: ${degradedChecks.length} of 6 checks failed (${degradedChecks.join(", ")}). Score includes uncertainty penalties and may not reflect true risk. Retry or use full /v1/check for best accuracy.`
+    : null;
+
   return {
     mint: mintAddress,
     name: metadata?.name ?? tokenMetadataExt?.token_name ?? null,
@@ -443,6 +462,8 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
     degraded,
     degraded_checks: degradedChecks,
     score_breakdown: breakdown,
+    data_confidence: dataConfidence,
+    degraded_note: degradedNote,
     response_signature: signResponse({
       mint: mintAddress,
       checked_at,

@@ -89,6 +89,9 @@ interface LiteResult {
   liquidity_rating: string | null;
   top_10_concentration: number | null;
   token_age_hours: number | null;
+  data_confidence: "complete" | "partial";
+  degraded_note: string | null;
+  uncertainty_penalties: Record<string, number> | null;
 }
 
 interface FullResult {
@@ -98,6 +101,8 @@ interface FullResult {
   checks: Record<string, unknown>;
   degraded: boolean;
   degraded_checks: string[];
+  data_confidence: "complete" | "partial";
+  degraded_note: string | null;
 }
 
 interface AuditRow {
@@ -115,6 +120,10 @@ async function fetchLite(mint: string): Promise<LiteResult> {
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`lite ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const confidence = res.headers.get("x-data-confidence");
+  if (!confidence || (confidence !== "complete" && confidence !== "partial")) {
+    throw new Error(`missing or invalid X-Data-Confidence header: ${confidence}`);
   }
   return res.json();
 }
@@ -216,7 +225,7 @@ function printRow(row: AuditRow) {
     const t2022 = l.is_token_2022 ? "yes" : "no";
     details = `auth=${pad(auth, 9)}  liq=${pad(liq, 8)}  t2022=${t2022}`;
     if (l.can_sell === false) details += `  ${RED}can_sell=false${RESET}`;
-    if (l.degraded) details += `  ${YELLOW}degraded=${JSON.stringify(l.degraded_checks)}${RESET}`;
+    if (l.data_confidence === "partial") details += `  ${YELLOW}partial=${JSON.stringify(l.degraded_checks)}${RESET}`;
   } else if (row.error) {
     details = `${RED}${row.error}${RESET}`;
   }
@@ -324,7 +333,7 @@ async function main() {
       } catch (err) {
         console.log(`  ${YELLOW}⚠${RESET} ${pad(row.entry.symbol, 12)} full check failed: ${(err as Error).message.slice(0, 60)}`);
       }
-      await sleep(500);
+      await sleep(2000);
     }
   } else if (fullTargets.length > 0 && !API_KEY) {
     console.log(`\n${DIM}Skipping full checks — no API_KEY set (would trigger x402 paywall)${RESET}`);
