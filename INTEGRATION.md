@@ -128,7 +128,7 @@ Returns comprehensive risk assessment for a single Solana token. Requires x402 p
 | `methodology_version` | string | Scoring algorithm version |
 | `response_signature` | string | Ed25519 signature over `{mint, checked_at, rpc_slot, risk_score}` |
 | `signer_pubkey` | string | Hex-encoded public key for signature verification |
-| `score_breakdown` | object | Per-check point contributions to `risk_score` (keys: `mint_authority`, `freeze_authority`, etc.) |
+| `score_breakdown` | object | Per-check point contributions to `risk_score`. Possible keys: `mint_authority`, `freeze_authority`, `top_holders_10`, `top_holders_1`, `liquidity`, `metadata`, `token_age`, `permanent_delegate`, `transfer_fee`, `honeypot`, `sell_tax`, `uncertainty_top_holders`, `uncertainty_liquidity`, `uncertainty_honeypot`, `uncertainty_token_age`, `uncertainty_metadata`. Only non-zero entries are present. |
 | `checks` | object | Detailed per-check results (see below) |
 | `changes` | object \| null | Delta report vs previous check (null on first check or cache hit) |
 | `alerts` | array | Severity-ranked alerts for significant changes |
@@ -435,8 +435,13 @@ const valid = crypto.verify(null, digest, pubKey, Buffer.from(data.response_sign
 When `degraded: true`, some on-chain checks couldn't complete (RPC timeout, rate limit, etc.).
 The `degraded_checks` array tells you which checks failed.
 
-**What it means for risk_score:** Uncertainty penalties are added (+5 to +10 per missing check).
-The score may overestimate risk — a token scoring 25 (MODERATE) when degraded might score 15 (LOW) when fully resolved.
+**What it means for risk_score:** Uncertainty penalties are added for each missing check:
+- `top_holders`: +10, `liquidity`: +10, `honeypot`: +10, `token_age`: +5, `metadata`: +3
+- **Maximum total uncertainty: 38 points** (all checks fail → score starts at 38, risk_level MODERATE)
+- A fully-degraded result can never reach CRITICAL or EXTREME from uncertainty alone
+
+The score is conservative by design — it overestimates risk when data is missing.
+A token scoring 25 (MODERATE) when degraded might score 15 (LOW) when fully resolved.
 
 **Recommended agent behavior:**
 1. If `risk_score <= threshold` despite degradation, still SAFE (penalties make it conservative)

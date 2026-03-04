@@ -39,7 +39,7 @@ export async function checkTopHolders(
 
   const accounts = largestAccounts.value;
 
-  if (totalSupplyRaw === 0n || accounts.length === 0) {
+  if (totalSupplyRaw === 0n) {
     return {
       status: "OK",
       top_10_percentage: 0,
@@ -49,6 +49,12 @@ export async function checkTopHolders(
       note: null,
       risk: "SAFE",
     };
+  }
+
+  if (accounts.length === 0) {
+    return unavailableHolders(
+      "Token has supply but no holder accounts found — concentration unknown",
+    );
   }
 
   return computeConcentration(accounts, totalSupplyRaw, null);

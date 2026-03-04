@@ -52,7 +52,7 @@ export function createMcpServer(baseUrl: string = ""): McpServer {
     {
       title: "Solana Token Safety Check",
       description:
-        "Free safety check for any Solana SPL token. Returns risk score (0-100), risk level, summary, name, symbol, Token-2022 detection, and risky extension flag. Full report with authority addresses, holder breakdown, LP lock status, honeypot details, and change detection available via x402 payment ($0.008 USDC) at GET /v1/check?mint=<address>. If degraded=true, some checks failed (see degraded_checks array). The risk_score includes uncertainty penalties for missing data — it may overestimate risk. Consider retrying after 30 seconds or using the full paid report for complete analysis.",
+        "Quick safety screening for any Solana SPL token. Returns: risk score (0-100), risk level (LOW/MODERATE/HIGH/CRITICAL/EXTREME), human-readable summary, token name/symbol, whether authorities are renounced, liquidity rating (DEEP/MODERATE/SHALLOW/NONE), top-10 holder concentration percentage, honeypot status (can_sell), token age, Token-2022 extension risks, and degradation status. This is a FREE lite check — for full details (individual authority addresses, holder breakdown with addresses, LP lock status and locker identity, honeypot sell tax, field-level change detection), use the x402 paid endpoint at GET /v1/check?mint=<address> ($0.008 USDC per request). If degraded=true, some checks failed (see degraded_checks array). The risk_score includes uncertainty penalties for missing data — it may overestimate risk.",
       inputSchema: {
         mint_address: z
           .string()

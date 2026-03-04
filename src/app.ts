@@ -7,6 +7,7 @@ import { config } from "./config.js";
 import { logger } from "./utils/logger.js";
 import { ApiError } from "./utils/errors.js";
 import { validateMint } from "./utils/validation.js";
+import { validateWebhookUrl } from "./utils/ssrf-guard.js";
 import {
   createSubscription,
   listSubscriptions,
@@ -359,7 +360,11 @@ app.post(
   "/v1/webhooks",
   webhookAuth,
   webhookJsonParser,
-  (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  async (
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction,
+  ) => {
     try {
       const { callback_url, mints, threshold } = req.body as {
         callback_url?: unknown;
@@ -371,6 +376,15 @@ app.post(
         throw new ApiError(
           "MISSING_REQUIRED_PARAM",
           "callback_url is required and must be a non-empty string",
+        );
+      }
+
+      try {
+        await validateWebhookUrl(callback_url);
+      } catch (err) {
+        throw new ApiError(
+          "INVALID_WEBHOOK_URL",
+          `Invalid callback URL: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
 
@@ -450,7 +464,11 @@ app.patch(
   "/v1/webhooks/:id",
   webhookAuth,
   webhookJsonParser,
-  (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  async (
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction,
+  ) => {
     try {
       const rawId = Array.isArray(req.params.id)
         ? req.params.id[0]
@@ -474,6 +492,14 @@ app.patch(
           throw new ApiError(
             "MISSING_REQUIRED_PARAM",
             "callback_url must be a non-empty string",
+          );
+        }
+        try {
+          await validateWebhookUrl(callback_url);
+        } catch (err) {
+          throw new ApiError(
+            "INVALID_WEBHOOK_URL",
+            `Invalid callback URL: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
         updates.callback_url = callback_url;
@@ -663,8 +689,12 @@ function auditReadAuth(
   if (apiKey) {
     const record = validateApiKey(apiKey);
     if (record && record.active) {
-      req.apiKeyRecord = record;
-      return next();
+      if (record.expires_at && new Date(record.expires_at) < new Date()) {
+        // Expired — fall through to bearer check
+      } else {
+        req.apiKeyRecord = record;
+        return next();
+      }
     }
   }
   // Fall back to admin bearer (timing-safe comparison)
@@ -690,9 +720,25 @@ app.get(
       if (mint) validateMint(mint);
       const from = req.query.from as string | undefined;
       const to = req.query.to as string | undefined;
-      const limit = req.query.limit
+      if (from && isNaN(Date.parse(from))) {
+        throw new ApiError(
+          "MISSING_REQUIRED_PARAM",
+          "from must be a valid ISO date",
+        );
+      }
+      if (to && isNaN(Date.parse(to))) {
+        throw new ApiError(
+          "MISSING_REQUIRED_PARAM",
+          "to must be a valid ISO date",
+        );
+      }
+      const rawLimit = req.query.limit
         ? parseInt(req.query.limit as string, 10)
         : 50;
+      const limit = Math.min(
+        Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 50,
+        100,
+      );
 
       const record = req.apiKeyRecord;
 
@@ -701,7 +747,7 @@ app.get(
         mint: mint || undefined,
         from: from || undefined,
         to: to || undefined,
-        limit: Math.min(limit, 100),
+        limit,
       });
 
       res.json(
@@ -1089,6 +1135,7 @@ app.get("/v1/check", async (req, res, next) => {
         "Missing required query parameter: mint",
       );
     }
+    validateMint(mint);
 
     const { result, fromCache } = await checkToken(mint);
     tokenChecksTotal.labels(req.apiKeyRecord ? "api_key" : "x402").inc();

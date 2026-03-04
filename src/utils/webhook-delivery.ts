@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { logger } from "./logger.js";
+import { isPrivateIp } from "./ssrf-guard.js";
 import type { WebhookSubscription, WebhookDelivery } from "./db.js";
 import {
   getSubscription,
@@ -20,6 +21,36 @@ export async function deliverWebhook(
     .createHmac("sha256", subscription.secret_hmac)
     .update(delivery.payload_json)
     .digest("hex");
+
+  // Defense-in-depth: re-check DNS at delivery time to defeat DNS rebinding
+  try {
+    const url = new URL(subscription.callback_url);
+    const dns = await import("node:dns/promises");
+    const ips: string[] = [];
+    try {
+      ips.push(...(await dns.resolve4(url.hostname)));
+    } catch { /* no A records */ }
+    try {
+      ips.push(...(await dns.resolve6(url.hostname)));
+    } catch { /* no AAAA records */ }
+    for (const ip of ips) {
+      if (isPrivateIp(ip)) {
+        logger.warn(
+          { deliveryId: delivery.id, ip, hostname: url.hostname },
+          "Webhook delivery blocked — DNS rebinding to private IP",
+        );
+        markFailed(delivery.id, null);
+        return false;
+      }
+    }
+  } catch (err) {
+    logger.warn(
+      { deliveryId: delivery.id, error: err instanceof Error ? err.message : String(err) },
+      "Webhook delivery DNS check failed",
+    );
+    markFailed(delivery.id, null);
+    return false;
+  }
 
   try {
     const response = await fetch(subscription.callback_url, {

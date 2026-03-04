@@ -76,16 +76,28 @@ describe("checkLiquidity", () => {
   // Prefetched quote scenarios
   // -------------------------------------------------------------------------
 
-  it("returns noLiquidity when prefetched quote is null", async () => {
+  it("returns null when prefetched quote is null and DexScreener also null", async () => {
     const result = await checkLiquidity(FAKE_MINT, null);
-    expect(result.has_liquidity).toBe(false);
-    expect(result.risk).toBe("CRITICAL");
-    expect(result.liquidity_rating).toBeNull();
+    expect(result).toBeNull();
   });
 
-  it("returns noLiquidity when no quote provided and DexScreener has no data", async () => {
+  it("returns null when no quote provided and DexScreener has no data", async () => {
     const result = await checkLiquidity(FAKE_MINT);
-    expect(result.has_liquidity).toBe(false);
+    expect(result).toBeNull();
+  });
+
+  it("returns noLiquidity when DexScreener confirms zero pairs", async () => {
+    vi.mocked(fetchDexScreenerLiquidity).mockResolvedValueOnce({
+      has_liquidity: false,
+      primary_pool: null,
+      pool_address: null,
+      liquidity_usd: 0,
+      liquidity_rating: "NONE",
+    });
+    const result = await checkLiquidity(FAKE_MINT, null);
+    expect(result).not.toBeNull();
+    expect(result!.has_liquidity).toBe(false);
+    expect(result!.risk).toBe("CRITICAL");
   });
 
   it("uses DexScreener fallback when Jupiter quote is null", async () => {

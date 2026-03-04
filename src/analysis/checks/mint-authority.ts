@@ -32,6 +32,20 @@ export interface MintAccountResult {
   extensions: ExtensionInfo[];
 }
 
+const RPC_TIMEOUT_MS = 5_000;
+
+function withTimeout<T>(p: Promise<T>, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`${label} RPC timeout`)),
+        RPC_TIMEOUT_MS,
+      ),
+    ),
+  ]);
+}
+
 export async function checkMintAccount(
   mintAddress: string,
 ): Promise<MintAccountResult> {
@@ -39,8 +53,10 @@ export async function checkMintAccount(
   const mintPubkey = new PublicKey(mintAddress);
 
   // Detect which token program owns this mint (with slot for auditability)
-  const { value: accountInfo, context } =
-    await connection.getAccountInfoAndContext(mintPubkey);
+  const { value: accountInfo, context } = await withTimeout(
+    connection.getAccountInfoAndContext(mintPubkey),
+    "getAccountInfo",
+  );
   if (!accountInfo) {
     throw new ApiError(
       "TOKEN_NOT_FOUND",
@@ -60,7 +76,10 @@ export async function checkMintAccount(
   }
   const programId = isToken2022 ? TOKEN_2022_PROGRAM : SPL_TOKEN_PROGRAM;
 
-  const mint = await getMint(connection, mintPubkey, "confirmed", programId);
+  const mint = await withTimeout(
+    getMint(connection, mintPubkey, "confirmed", programId),
+    "getMint",
+  );
 
   const extensions = isToken2022 ? parseExtensions(accountInfo.data) : [];
 
@@ -111,6 +130,8 @@ function parseExtensions(data: Buffer): ExtensionInfo[] {
     }
     const length = data.readUInt16LE(offset + 2);
     const valueStart = offset + 4;
+    const valueEnd = valueStart + length;
+    if (valueEnd > data.length) break; // Malformed TLV — stop parsing
     const paddingLen = length % 4 === 0 ? 0 : 4 - (length % 4);
     offset = valueStart + length + paddingLen;
 

@@ -475,11 +475,12 @@ describe("checkTopHolders", () => {
     expect(result.risk).toBe("SAFE");
   });
 
-  it("returns zeros for empty accounts", async () => {
+  it("returns UNAVAILABLE when accounts empty but supply non-zero", async () => {
     conn.getTokenLargestAccounts.mockResolvedValue({ value: [] });
     const result = await checkTopHolders(MINT, 1000n);
-    expect(result.top_10_percentage).toBe(0);
-    expect(result.risk).toBe("SAFE");
+    expect(result.status).toBe("UNAVAILABLE");
+    expect(result.risk).toBe("UNKNOWN");
+    expect(result.note).toContain("concentration unknown");
   });
 
   it("flags HIGH when top1 > 20%", async () => {
@@ -607,16 +608,14 @@ describe("checkLiquidity", () => {
     expect(result.risk).toBe("SAFE");
   });
 
-  it("returns CRITICAL when prefetched quote is null", async () => {
+  it("returns null when prefetched quote is null and DexScreener also null", async () => {
     const result = await checkLiquidity(MINT, null);
-    expect(result.has_liquidity).toBe(false);
-    expect(result.risk).toBe("CRITICAL");
+    expect(result).toBeNull();
   });
 
-  it("returns CRITICAL when no quote provided", async () => {
+  it("returns null when no quote provided and DexScreener null", async () => {
     const result = await checkLiquidity(MINT);
-    expect(result.has_liquidity).toBe(false);
-    expect(result.risk).toBe("CRITICAL");
+    expect(result).toBeNull();
   });
 });
 
@@ -686,6 +685,66 @@ describe("checkMetadata", () => {
 
   it("returns null on parse error (corrupt data)", async () => {
     conn.getAccountInfo.mockResolvedValue({ data: Buffer.alloc(10) });
+    const result = await checkMetadata(MINT);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when numCreators overflows buffer (OOB protection)", async () => {
+    // Build metadata with a crafted numCreators = 0xFFFFFFFF
+    const parts: Buffer[] = [];
+    parts.push(Buffer.from([4])); // key
+    parts.push(Buffer.alloc(32)); // update_authority
+    parts.push(Buffer.alloc(32)); // mint
+
+    const borshStr = (s: string) => {
+      const bytes = Buffer.from(s, "utf8");
+      const len = Buffer.alloc(4);
+      len.writeUInt32LE(bytes.length);
+      return Buffer.concat([len, bytes]);
+    };
+
+    parts.push(borshStr("Test"));
+    parts.push(borshStr("TST"));
+    parts.push(borshStr("https://test.com"));
+    parts.push(Buffer.alloc(2)); // seller_fee_basis_points
+    parts.push(Buffer.from([1])); // hasCreators = true
+
+    // numCreators = 0xFFFFFFFF — should trigger bounds guard
+    const numCreators = Buffer.alloc(4);
+    numCreators.writeUInt32LE(0xffffffff);
+    parts.push(numCreators);
+
+    const data = Buffer.concat(parts);
+    conn.getAccountInfo.mockResolvedValue({ data });
+    const result = await checkMetadata(MINT);
+    // Should return null (parse error caught by outer try/catch)
+    expect(result).toBeNull();
+  });
+
+  it("returns null when metadata truncated before isMutable", async () => {
+    // Build metadata that ends right before isMutable byte
+    const parts: Buffer[] = [];
+    parts.push(Buffer.from([4])); // key
+    parts.push(Buffer.alloc(32)); // update_authority
+    parts.push(Buffer.alloc(32)); // mint
+
+    const borshStr = (s: string) => {
+      const bytes = Buffer.from(s, "utf8");
+      const len = Buffer.alloc(4);
+      len.writeUInt32LE(bytes.length);
+      return Buffer.concat([len, bytes]);
+    };
+
+    parts.push(borshStr("Test"));
+    parts.push(borshStr("TST"));
+    parts.push(borshStr(""));
+    parts.push(Buffer.alloc(2)); // seller_fee_basis_points
+    parts.push(Buffer.from([0])); // hasCreators = false
+    parts.push(Buffer.from([0])); // primary_sale_happened
+    // Don't add isMutable byte — truncated
+
+    const data = Buffer.concat(parts);
+    conn.getAccountInfo.mockResolvedValue({ data });
     const result = await checkMetadata(MINT);
     expect(result).toBeNull();
   });

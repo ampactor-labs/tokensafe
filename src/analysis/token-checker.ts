@@ -19,7 +19,7 @@ import {
   METHODOLOGY_VERSION,
 } from "./risk-score.js";
 import { ApiError } from "../utils/errors.js";
-import { degradedChecksTotal } from "../utils/metrics.js";
+import { degradedChecksTotal, rpcLatency } from "../utils/metrics.js";
 import { logger } from "../utils/logger.js";
 import { reportRpcFailure, reportRpcSuccess } from "../solana/rpc.js";
 import {
@@ -257,10 +257,13 @@ export async function checkTokenLite(
 async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
   // Step 1: mint account data (needed for supply → top holders, decimals → honeypot)
   let mintData;
+  const rpcStart = Date.now();
   try {
     mintData = await checkMintAccount(mintAddress);
+    rpcLatency.labels("checkMintAccount").observe((Date.now() - rpcStart) / 1000);
     reportRpcSuccess();
   } catch (err) {
+    rpcLatency.labels("checkMintAccount").observe((Date.now() - rpcStart) / 1000);
     reportRpcFailure();
     if (err instanceof ApiError) throw err;
     throw new ApiError(
@@ -289,21 +292,34 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
     buyInputAmount: 0n,
   };
 
+  const timed = <T>(label: string, p: Promise<T>): Promise<T> => {
+    const s = Date.now();
+    return p.finally(() =>
+      rpcLatency.labels(label).observe((Date.now() - s) / 1000),
+    );
+  };
+
   const [holders, jupiterTrip, metadata, tokenAge] = await Promise.all([
-    checkTopHolders(mintAddress, mintData.supplyRaw)
-      .catch((err): TopHoldersResult => {
-        logger.warn({ err, mintAddress }, "Top holders check failed");
-        return fallbackHolders;
-      }),
-    fetchRoundTrip(mintAddress).catch((): JupiterRoundTrip => emptyTrip),
-    checkMetadata(mintAddress)
+    timed(
+      "checkTopHolders",
+      checkTopHolders(mintAddress, mintData.supplyRaw),
+    ).catch((err): TopHoldersResult => {
+      logger.warn({ err, mintAddress }, "Top holders check failed");
+      return fallbackHolders;
+    }),
+    timed("fetchRoundTrip", fetchRoundTrip(mintAddress)).catch(
+      (): JupiterRoundTrip => emptyTrip,
+    ),
+    timed("checkMetadata", checkMetadata(mintAddress))
       .then((r): (MetadataResult & { status: "OK" | "UNAVAILABLE" }) | null =>
         r ? { ...r, status: "OK" } : null,
       )
       .catch(
         (): (MetadataResult & { status: "OK" | "UNAVAILABLE" }) | null => null,
       ),
-    checkTokenAge(mintAddress).catch((): TokenAgeResult | null => null),
+    timed("checkTokenAge", checkTokenAge(mintAddress)).catch(
+      (): TokenAgeResult | null => null,
+    ),
   ]);
 
   // Honeypot: pure computation from Jupiter quotes (no I/O)
@@ -319,9 +335,9 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
     honeypotRaw ? { ...honeypotRaw, status: "OK" } : null;
 
   // Liquidity: use buy quote for pool info + price impact, then LP lock detection (RPC)
-  const liquidityRaw: LiquidityResult | null = await checkLiquidity(
-    mintAddress,
-    jupiterTrip.buyQuote,
+  const liquidityRaw: LiquidityResult | null = await timed(
+    "checkLiquidity",
+    checkLiquidity(mintAddress, jupiterTrip.buyQuote),
   ).catch((): LiquidityResult | null => null);
   const liquidity: (LiquidityResult & { status: "OK" | "UNAVAILABLE" }) | null =
     liquidityRaw ? { ...liquidityRaw, status: "OK" } : null;

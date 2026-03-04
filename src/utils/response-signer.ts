@@ -20,14 +20,25 @@ interface SignablePayload {
 const { privateKey, publicKey } = (() => {
   const envKey = process.env.RESPONSE_SIGNING_KEY;
   if (envKey) {
-    const privDer = Buffer.from(envKey, "hex");
-    const priv = crypto.createPrivateKey({
-      key: privDer,
-      format: "der",
-      type: "pkcs8",
-    });
-    const pub = crypto.createPublicKey(priv);
-    return { privateKey: priv, publicKey: pub };
+    try {
+      const privDer = Buffer.from(envKey, "hex");
+      const priv = crypto.createPrivateKey({
+        key: privDer,
+        format: "der",
+        type: "pkcs8",
+      });
+      const pub = crypto.createPublicKey(priv);
+      return { privateKey: priv, publicKey: pub };
+    } catch (err) {
+      console.warn(
+        "Failed to load RESPONSE_SIGNING_KEY, using ephemeral key:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  } else {
+    console.warn(
+      "RESPONSE_SIGNING_KEY not set — using ephemeral Ed25519 key (changes on restart, attestations unverifiable across deploys)",
+    );
   }
   return crypto.generateKeyPairSync("ed25519");
 })();
