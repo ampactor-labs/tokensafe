@@ -59,9 +59,11 @@ function startPhase(name: string) {
 }
 
 async function check(name: string, fn: () => Promise<void>): Promise<boolean> {
+  const t0 = performance.now();
   try {
     await fn();
-    console.log(`  \x1b[32m✓\x1b[0m ${name}`);
+    const ms = Math.round(performance.now() - t0);
+    console.log(`  \x1b[32m✓\x1b[0m ${name} \x1b[2m(${ms}ms)\x1b[0m`);
     currentPhase.passed++;
     return true;
   } catch (firstErr) {
@@ -69,11 +71,13 @@ async function check(name: string, fn: () => Promise<void>): Promise<boolean> {
     try {
       await sleep(1000);
       await fn();
-      console.log(`  \x1b[32m✓\x1b[0m ${name} (retry)`);
+      const ms = Math.round(performance.now() - t0);
+      console.log(`  \x1b[32m✓\x1b[0m ${name} (retry) \x1b[2m(${ms}ms)\x1b[0m`);
       currentPhase.passed++;
       return true;
     } catch (err) {
-      console.log(`  \x1b[31m✗\x1b[0m ${name}`);
+      const ms = Math.round(performance.now() - t0);
+      console.log(`  \x1b[31m✗\x1b[0m ${name} \x1b[2m(${ms}ms)\x1b[0m`);
       console.log(`    ${(err as Error).message}`);
       currentPhase.failed++;
       return false;
@@ -98,6 +102,7 @@ function log(msg: string) {
 async function main() {
   const BEARER = process.env.WEBHOOK_ADMIN_BEARER;
 
+  const startTime = performance.now();
   console.log(`\n${"═".repeat(60)}`);
   console.log(`  TOKENSAFE E2E MAINNET CUSTOMER ROLEPLAY`);
   console.log(`  ${new Date().toISOString()}`);
@@ -202,7 +207,7 @@ async function main() {
     log(`risk=${body.risk_score} (${body.risk_level}) name=${body.name}`);
   });
 
-  await sleep(7000);
+  await sleep(3000);
 
   // Lite — USDC
   await check("GET /v1/check/lite USDC — LOW risk", async () => {
@@ -224,7 +229,7 @@ async function main() {
     log(`risk=${body.risk_score} (${body.risk_level}) can_sell=${body.can_sell} liq=${body.has_liquidity}`);
   });
 
-  await sleep(7000);
+  await sleep(3000);
 
   // Lite — ai16z
   await check("GET /v1/check/lite ai16z — log profile", async () => {
@@ -243,7 +248,7 @@ async function main() {
     log(`X-Cache: ${cache}`);
   });
 
-  await sleep(7000);
+  await sleep(3000);
 
   // Wild token (optional)
   if (WILD_MINT) {
@@ -257,7 +262,7 @@ async function main() {
         log("Token not found (404)");
       }
     });
-    await sleep(7000);
+    await sleep(3000);
   }
 
   // Decide endpoints
@@ -277,7 +282,7 @@ async function main() {
     log(`decision=${body.decision} risk=${body.risk_score}`);
   });
 
-  await sleep(7000);
+  await sleep(3000);
 
   // MCP
   const mcpHeaders = { "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
@@ -472,23 +477,51 @@ async function main() {
     assert(typeof body.response_signature === "string", "missing response_signature");
     assert(typeof body.score_breakdown === "object", "missing score_breakdown");
     assert(body.signer_pubkey === signerPubkey!, `signer_pubkey mismatch: health=${signerPubkey!.slice(0, 8)} check=${body.signer_pubkey?.slice(0, 8)}`);
+    // Verify LP lock detection works (LP mint offset fix: 432→464)
+    const liq = body.checks.liquidity;
+    if (liq?.primary_pool?.toLowerCase().includes("raydium")) {
+      log(`lp_locked=${liq.lp_locked} lp_mint=${liq.lp_mint?.slice(0, 12)}... lp_locker=${liq.lp_locker}`);
+      // pool_vault_addresses should be present for Raydium AMM v4 pools
+      if (liq.pool_vault_addresses) {
+        assert(Array.isArray(liq.pool_vault_addresses), "pool_vault_addresses should be array");
+        assert(liq.pool_vault_addresses.length === 2, `expected 2 vault addresses, got ${liq.pool_vault_addresses.length}`);
+        log(`pool_vault_addresses: [${liq.pool_vault_addresses.map((a: string) => a.slice(0, 8) + "...").join(", ")}]`);
+      } else {
+        log(`pool_vault_addresses: null (non-AMM-v4 pool or LP lock skipped)`);
+      }
+    }
     log(`risk=${body.risk_score} (${body.risk_level}) mint_auth=${body.checks.mint_authority.status} freeze_auth=${body.checks.freeze_authority.status}`);
     log(`signer_pubkey consistent with /health ✓`);
   });
 
+  // Brief pause — let Helius RPC recover between heavy token checks
+  await sleep(2000);
+
   // 3.2 Single check — TRUMP
-  await check("GET /v1/check TRUMP via API key — high risk", async () => {
+  await check("GET /v1/check TRUMP via API key — elevated risk or degraded", async () => {
     const res = await fetch(`${BASE}/v1/check?mint=${MINTS.TRUMP}`, { headers: apiKeyHeaders });
     assert(res.status === 200, `expected 200, got ${res.status}`);
     const body = await res.json() as any;
-    assert(body.risk_score > 15, `TRUMP risk too low: ${body.risk_score}`);
-    assert(body.risk_score > body.checks ? 0 : -1, "body.checks missing"); // Just ensure checks present
-    log(`risk=${body.risk_score} (${body.risk_level})`);
+    assert(typeof body.checks === "object", "body.checks missing");
+    // TRUMP should score high when non-degraded (concentration penalties).
+    // When degraded (top_holders timeout under burst), uncertainty penalties → lower score.
+    if (body.degraded) {
+      assert(body.risk_score >= 5, `degraded TRUMP risk too low: ${body.risk_score}`);
+      log(`DEGRADED — risk=${body.risk_score} (${body.risk_level}) degraded_checks=${JSON.stringify(body.degraded_checks)}`);
+    } else {
+      assert(body.risk_score > 15, `non-degraded TRUMP risk too low: ${body.risk_score}`);
+      log(`risk=${body.risk_score} (${body.risk_level})`);
+    }
     log(`mint_auth=${body.checks.mint_authority?.status} freeze_auth=${body.checks.freeze_authority?.status}`);
-    log(`top10=${body.checks.top_holders?.top_10_percentage}% top1=${body.checks.top_holders?.top_1_percentage}%`);
-    log(`liquidity=${body.checks.liquidity?.status} (${body.checks.liquidity?.liquidity_rating})`);
+    const th = body.checks.top_holders;
+    log(`top10=${th?.top_10_percentage}% top1=${th?.top_1_percentage}% status=${th?.status}`);
+    if (th?.note) log(`top_holders note: ${th.note}`);
+    const tliq = body.checks.liquidity;
+    log(`liquidity=${tliq?.status} (${tliq?.liquidity_rating}) vaults=${JSON.stringify(tliq?.pool_vault_addresses?.map((a: string) => a.slice(0, 8)) ?? null)}`);
     log(`score_breakdown: ${JSON.stringify(body.score_breakdown)}`);
   });
+
+  await sleep(3000);
 
   // 3.3 Batch medium — 5 diverse memecoins
   await check("POST /v1/check/batch/medium — 5 memecoins", async () => {
@@ -513,7 +546,9 @@ async function main() {
     }
   });
 
-  // 3.4 Batch large — full roster
+  await sleep(5000);
+
+  // 3.4 Batch large — full roster (10 tokens = ~60 RPC calls — give Helius breathing room)
   await check("POST /v1/check/batch/large — 10 tokens (full roster)", async () => {
     const allMints = Object.values(MINTS);
     if (WILD_MINT) allMints.push(WILD_MINT);
@@ -548,9 +583,16 @@ async function main() {
       assert(usdcResult.risk_score <= 20, `USDC risk too high in batch: ${usdcResult.risk_score}`);
     }
     if (trumpResult?.risk_score !== undefined && wsolResult?.risk_score !== undefined) {
-      assert(trumpResult.risk_score > wsolResult.risk_score, `TRUMP (${trumpResult.risk_score}) should score higher than wSOL (${wsolResult.risk_score})`);
+      // TRUMP may return degraded (top_holders timeout) — only compare when non-degraded
+      if (!trumpResult.degraded) {
+        assert(trumpResult.risk_score > wsolResult.risk_score, `TRUMP (${trumpResult.risk_score}) should score higher than wSOL (${wsolResult.risk_score})`);
+      } else {
+        log(`    ⚠ TRUMP degraded in batch — skipping risk comparison`);
+      }
     }
   });
+
+  await sleep(5000);
 
   // 3.5 Audit small — mixed risk
   let auditId: string;
@@ -585,6 +627,8 @@ async function main() {
       }
     }
   });
+
+  await sleep(5000);
 
   // 3.6 Audit standard — full roster
   let auditStandardId: string;
@@ -774,12 +818,14 @@ async function main() {
   console.log(`  ${"Total".padEnd(40)} ${String(totalPassed).padStart(4)}  ${String(totalFailed).padStart(4)}  ${String(totalSkipped).padStart(4)}`);
   console.log();
 
+  const elapsed = Math.round((performance.now() - startTime) / 1000);
   if (!SKIP_X402) {
     console.log(`  x402 spend: ~$0.033 USDC (1 check + 1 batch/small)`);
   } else {
     console.log(`  x402 spend: $0 (SKIP_X402=1)`);
   }
   console.log(`  Total checks: ${total}`);
+  console.log(`  Elapsed: ${elapsed}s`);
   console.log();
 
   if (totalFailed > 0) {
