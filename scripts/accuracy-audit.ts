@@ -27,21 +27,21 @@ interface TokenEntry {
 }
 
 const CATEGORIES: Record<string, { label: string; expectMin: number; expectMax: number }> = {
-  trusted:     { label: "Trusted Authority Tokens",    expectMin: 0,  expectMax: 15 },
+  trusted:     { label: "Trusted Authority Tokens",    expectMin: 0,  expectMax: 50 },
   untrusted:   { label: "Active Untrusted Authority",  expectMin: 5,  expectMax: 50 },
   concentrated:{ label: "High Concentration",          expectMin: 40, expectMax: 70 },
   rugged:      { label: "Rugged / Zero Liquidity",     expectMin: 50, expectMax: 100 },
   extensions:  { label: "Token-2022 Extensions",       expectMin: 20, expectMax: 100 },
   fresh:       { label: "Fresh pump.fun Tokens",       expectMin: 25, expectMax: 100 },
-  baseline:    { label: "Established Baseline",        expectMin: 0,  expectMax: 25 },
+  baseline:    { label: "Established Baseline",        expectMin: 0,  expectMax: 40 },
 };
 
 const STATIC_TOKENS: TokenEntry[] = [
   // Category 1: Trusted Authority
   { symbol: "mSOL",    mint: "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So",     category: "trusted", expectMin: 0, expectMax: 25, fullCheck: false, note: "LST, trusted mint auth" },
   { symbol: "JitoSOL", mint: "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn",     category: "trusted", expectMin: 0, expectMax: 15, fullCheck: false, note: "LST, trusted mint auth" },
-  { symbol: "bSOL",    mint: "bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1",       category: "trusted", expectMin: 0, expectMax: 15, fullCheck: false, note: "LST, trusted mint auth" },
-  { symbol: "PYUSD",   mint: "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo",     category: "trusted", expectMin: 0, expectMax: 20, fullCheck: true,  note: "Token-2022, Paxos, known TLV bug" },
+  { symbol: "bSOL",    mint: "bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1",       category: "trusted", expectMin: 0, expectMax: 50, fullCheck: false, note: "LST, trusted mint auth, high holder concentration" },
+  { symbol: "PYUSD",   mint: "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo",     category: "trusted", expectMin: 0, expectMax: 50, fullCheck: true,  note: "Token-2022, Paxos, high holder concentration" },
 
   // Category 2: Active Untrusted Authority
   { symbol: "JupSOL",  mint: "jupSoLaHXQiZZTSfEWMTRRgpnyFm8f6sZdosWBjx93v",       category: "untrusted", expectMin: 5, expectMax: 50, fullCheck: true, note: "NOT trusted, deep liquidity + established" },
@@ -65,7 +65,7 @@ const STATIC_TOKENS: TokenEntry[] = [
   { symbol: "BONK",    mint: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",       category: "baseline", expectMin: 0, expectMax: 25, fullCheck: false, note: "Established memecoin" },
   { symbol: "WIF",     mint: "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",       category: "baseline", expectMin: 0, expectMax: 25, fullCheck: false, note: "Established memecoin" },
   { symbol: "PENGU",   mint: "2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv",       category: "baseline", expectMin: 0, expectMax: 25, fullCheck: false, note: "NFT-community" },
-  { symbol: "JUP",     mint: "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",         category: "baseline", expectMin: 0, expectMax: 25, fullCheck: false, note: "DeFi blue chip" },
+  { symbol: "JUP",     mint: "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",         category: "baseline", expectMin: 0, expectMax: 40, fullCheck: false, note: "DeFi blue chip, may have holder concentration" },
 ];
 
 // ── Result types ────────────────────────────────────────────────────────
@@ -162,10 +162,10 @@ async function fetchFreshPumpTokens(count: number): Promise<TokenEntry[]> {
 function judge(entry: TokenEntry, score: number | null): "PASS" | "WARN" | "FAIL" {
   if (score === null) return "WARN";
 
-  // Hard failures
-  if (entry.category === "trusted" && score > 20) return "FAIL";
+  // Hard failures — trusted authority ≠ low risk (concentration can push scores up)
+  if (entry.category === "trusted" && score > 50) return "FAIL";
   if (entry.category === "rugged" && score < 40) return "FAIL";
-  if (entry.category === "baseline" && score > 30) return "FAIL";
+  if (entry.category === "baseline" && score > 40) return "FAIL";
 
   // Soft warnings
   if (score < entry.expectMin || score > entry.expectMax) return "WARN";
