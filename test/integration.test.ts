@@ -72,6 +72,7 @@ function makeResult(overrides?: Partial<TokenCheckResult>): CheckTokenResponse {
         lp_lock_expiry: null,
         lp_mint: null,
         lp_locker: null,
+        pool_vault_addresses: null,
         risk: "SAFE",
       },
       metadata: null,
@@ -225,6 +226,25 @@ describe("GET /v1/check", () => {
     );
     const res = await request(app).get(`/v1/check?mint=${WSOL}`);
     expect(res.body.degraded).toBe(true);
+  });
+
+  it("includes pool_vault_addresses in liquidity when present", async () => {
+    mockCheckToken.mockResolvedValue(
+      makeResult({
+        checks: {
+          ...makeResult().result.checks,
+          liquidity: {
+            ...makeResult().result.checks.liquidity!,
+            pool_vault_addresses: ["VaultA111", "VaultB222"],
+          },
+        },
+      }),
+    );
+    const res = await request(app).get(`/v1/check?mint=${WSOL}`);
+    expect(res.body.checks.liquidity.pool_vault_addresses).toEqual([
+      "VaultA111",
+      "VaultB222",
+    ]);
   });
 
   it("includes response_signature and signer_pubkey", async () => {
@@ -1567,5 +1587,41 @@ describe("Batch endpoints", () => {
       .send({ mints });
     expect(res.status).toBe(200);
     expect(res.body.total).toBe(5);
+  });
+});
+
+describe("degraded result caching (unit)", () => {
+  it("setCached stores degraded results with short TTL", async () => {
+    // Test the real cache module directly (not mocked)
+    const cache = await import("../src/utils/cache.js");
+    cache.clearCache();
+
+    const degradedResult = makeResult({
+      degraded: true,
+      degraded_checks: ["top_holders"],
+      risk_score: 25,
+      risk_level: "MODERATE",
+    }).result;
+
+    cache.setCached(WSOL, degradedResult);
+    const cached = cache.getCached(WSOL);
+    expect(cached).toBeDefined();
+    expect(cached!.degraded).toBe(true);
+    expect(cached!.risk_score).toBe(25);
+
+    cache.clearCache();
+  });
+
+  it("setCached stores non-degraded results normally", async () => {
+    const cache = await import("../src/utils/cache.js");
+    cache.clearCache();
+
+    const normalResult = makeResult({ degraded: false }).result;
+    cache.setCached(WSOL, normalResult);
+    const cached = cache.getCached(WSOL);
+    expect(cached).toBeDefined();
+    expect(cached!.degraded).toBe(false);
+
+    cache.clearCache();
   });
 });

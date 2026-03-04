@@ -21,6 +21,7 @@ export interface LiquidityResult {
   lp_lock_expiry: string | null;
   lp_mint: string | null;
   lp_locker: string | null;
+  pool_vault_addresses: string[] | null;
   risk: "SAFE" | "WARNING" | "HIGH" | "CRITICAL";
 }
 
@@ -30,8 +31,15 @@ export interface LiquidityResult {
 
 const RAYDIUM_AMM_V4 = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
 const RAYDIUM_AMM_V4_ACCOUNT_LEN = 752;
-// lpMint offset in Raydium AMM v4 account layout (32 u64s + 5 u128s + 3 u64s + 4 pubkeys = 432 bytes)
-const LP_MINT_OFFSET = 432;
+// Raydium AMM v4 account layout offsets (pubkeys region):
+// Verified empirically against SOL/USDC pool 58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2
+// offset 336 = baseVault (token account holding base token)
+// offset 368 = quoteVault (token account holding quote token)
+// offset 400 = baseMint, offset 432 = quoteMint
+// offset 464 = lpMint
+const BASE_VAULT_OFFSET = 336;
+const QUOTE_VAULT_OFFSET = 368;
+const LP_MINT_OFFSET = 464;
 
 /** Known LP locker program addresses → human-readable name */
 export const KNOWN_LOCKERS = new Map<string, string>([
@@ -66,6 +74,7 @@ interface LpLockResult {
   lp_lock_percentage: number;
   lp_mint: string;
   locked_in: string | null;
+  pool_vault_addresses: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +109,7 @@ export async function checkLiquidity(
           lp_lock_expiry: null,
           lp_mint: null,
           lp_locker: null,
+          pool_vault_addresses: null,
           risk: dex.liquidity_rating === "SHALLOW" || dex.liquidity_rating === "NONE" ? "WARNING" : "SAFE",
         };
       }
@@ -143,6 +153,7 @@ export async function checkLiquidity(
       lp_lock_expiry: null,
       lp_mint: lpLock?.lp_mint ?? null,
       lp_locker: lpLock?.locked_in ?? null,
+      pool_vault_addresses: lpLock?.pool_vault_addresses ?? null,
       risk,
     };
   } catch (err) {
@@ -184,6 +195,9 @@ async function detectLpLock(poolAddress: string): Promise<LpLockResult | null> {
   if (!poolInfo) return null;
   if (poolInfo.owner.toBase58() !== RAYDIUM_AMM_V4) return null;
   if (poolInfo.data.length !== RAYDIUM_AMM_V4_ACCOUNT_LEN) return null;
+
+  const baseVault = new PublicKey(poolInfo.data.subarray(BASE_VAULT_OFFSET, BASE_VAULT_OFFSET + 32)).toBase58();
+  const quoteVault = new PublicKey(poolInfo.data.subarray(QUOTE_VAULT_OFFSET, QUOTE_VAULT_OFFSET + 32)).toBase58();
 
   const lpMintBytes = poolInfo.data.subarray(
     LP_MINT_OFFSET,
@@ -233,6 +247,7 @@ async function detectLpLock(poolAddress: string): Promise<LpLockResult | null> {
     lp_lock_percentage: Math.round(lockedPct * 10) / 10,
     lp_mint: lpMint.toBase58(),
     locked_in: lockedIn,
+    pool_vault_addresses: [baseVault, quoteVault],
   };
 }
 
@@ -268,6 +283,7 @@ function noLiquidity(): LiquidityResult {
     lp_lock_expiry: null,
     lp_mint: null,
     lp_locker: null,
+    pool_vault_addresses: null,
     risk: "CRITICAL",
   };
 }

@@ -49,7 +49,7 @@ vi.mock("../src/utils/response-signer.js", () => ({
 import { getConnection } from "../src/solana/rpc.js";
 import { getMint } from "@solana/spl-token";
 import { checkMintAccount } from "../src/analysis/checks/mint-authority.js";
-import { checkTopHolders } from "../src/analysis/checks/top-holders.js";
+import { checkTopHolders, adjustForVaults } from "../src/analysis/checks/top-holders.js";
 import { checkLiquidity } from "../src/analysis/checks/liquidity.js";
 import { checkMetadata } from "../src/analysis/checks/metadata.js";
 import { checkTokenAge } from "../src/analysis/checks/token-age.js";
@@ -1202,5 +1202,124 @@ describe("checkTokenLite", () => {
     mockGetCached.mockReturnValue(makeFullResult());
     const { fromCache } = await checkTokenLite(MINT);
     expect(fromCache).toBe(true);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// 9. adjustForVaults — AMM vault exclusion from concentration
+// ════════════════════════════════════════════════════════════════════
+
+describe("adjustForVaults", () => {
+  const VAULT_A = "VaultA1111111111111111111111111111111111111";
+  const VAULT_B = "VaultB1111111111111111111111111111111111111";
+  const HOLDER_1 = "Holder111111111111111111111111111111111111";
+  const HOLDER_2 = "Holder222222222222222222222222222222222222";
+
+  function makeHoldersFromDetail(detail: Array<{ address: string; percentage: number }>): import("../src/analysis/checks/top-holders.js").TopHoldersResult {
+    const top10 = detail.reduce((s, h) => s + h.percentage, 0);
+    const top1 = detail.length > 0 ? detail[0].percentage : 0;
+    return {
+      status: "OK",
+      top_10_percentage: top10,
+      top_1_percentage: top1,
+      holder_count_estimate: null,
+      top_holders_detail: detail,
+      note: null,
+      risk: top10 > 50 && top1 > 20 ? "CRITICAL" : top10 > 50 || top1 > 20 ? "HIGH" : "SAFE",
+    };
+  }
+
+  it("removes vault address from top 1 and drops concentration", () => {
+    const holders = makeHoldersFromDetail([
+      { address: VAULT_A, percentage: 60 },
+      { address: HOLDER_1, percentage: 15 },
+      { address: HOLDER_2, percentage: 5 },
+    ]);
+    const result = adjustForVaults(holders, new Set([VAULT_A]));
+    expect(result.top_1_percentage).toBe(15);
+    expect(result.top_10_percentage).toBe(20);
+    expect(result.risk).toBe("SAFE");
+    expect(result.note).toContain("1 vault account");
+  });
+
+  it("returns unchanged holders when vault address is not in list", () => {
+    const holders = makeHoldersFromDetail([
+      { address: HOLDER_1, percentage: 60 },
+      { address: HOLDER_2, percentage: 15 },
+    ]);
+    const result = adjustForVaults(holders, new Set([VAULT_A]));
+    expect(result).toBe(holders); // same reference, not modified
+  });
+
+  it("returns unchanged holders with empty vault set", () => {
+    const holders = makeHoldersFromDetail([
+      { address: HOLDER_1, percentage: 60 },
+    ]);
+    const result = adjustForVaults(holders, new Set());
+    expect(result).toBe(holders);
+  });
+
+  it("excludes multiple vaults", () => {
+    const holders = makeHoldersFromDetail([
+      { address: VAULT_A, percentage: 40 },
+      { address: VAULT_B, percentage: 30 },
+      { address: HOLDER_1, percentage: 10 },
+      { address: HOLDER_2, percentage: 5 },
+    ]);
+    const result = adjustForVaults(holders, new Set([VAULT_A, VAULT_B]));
+    expect(result.top_1_percentage).toBe(10);
+    expect(result.top_10_percentage).toBe(15);
+    expect(result.risk).toBe("SAFE");
+    expect(result.note).toContain("2 vault accounts");
+  });
+
+  it("returns UNAVAILABLE holders unchanged", () => {
+    const holders: import("../src/analysis/checks/top-holders.js").TopHoldersResult = {
+      status: "UNAVAILABLE",
+      top_10_percentage: 0,
+      top_1_percentage: 0,
+      holder_count_estimate: null,
+      top_holders_detail: null,
+      note: "RPC error",
+      risk: "UNKNOWN",
+    };
+    const result = adjustForVaults(holders, new Set([VAULT_A]));
+    expect(result).toBe(holders);
+  });
+
+  it("preserves risk classification after vault removal", () => {
+    // After removing vault, top1 = 25% → HIGH (>20)
+    const holders = makeHoldersFromDetail([
+      { address: VAULT_A, percentage: 50 },
+      { address: HOLDER_1, percentage: 25 },
+      { address: HOLDER_2, percentage: 10 },
+    ]);
+    const result = adjustForVaults(holders, new Set([VAULT_A]));
+    expect(result.top_1_percentage).toBe(25);
+    expect(result.risk).toBe("HIGH");
+  });
+
+  it("returns original when ALL holders are vaults (no false safety)", () => {
+    const holders = makeHoldersFromDetail([
+      { address: VAULT_A, percentage: 60 },
+      { address: VAULT_B, percentage: 30 },
+    ]);
+    const result = adjustForVaults(holders, new Set([VAULT_A, VAULT_B]));
+    // Should return original — don't produce fake 0% concentration
+    expect(result).toBe(holders);
+  });
+
+  it("returns original when top_holders_detail is null", () => {
+    const holders: import("../src/analysis/checks/top-holders.js").TopHoldersResult = {
+      status: "OK",
+      top_10_percentage: 50,
+      top_1_percentage: 30,
+      holder_count_estimate: null,
+      top_holders_detail: null,
+      note: null,
+      risk: "CRITICAL",
+    };
+    const result = adjustForVaults(holders, new Set([VAULT_A]));
+    expect(result).toBe(holders);
   });
 });
