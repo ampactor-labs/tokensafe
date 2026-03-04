@@ -57,6 +57,14 @@ const TRUSTED_FREEZE_AUTHORITIES = new Set([
   "2apBGMsS6ti9RyF5TwQTDswXBWskiJP2LD4cUEDqYJjk",
 ]);
 
+export function isTrustedMintAuthority(addr: string): boolean {
+  return TRUSTED_MINT_AUTHORITIES.has(addr);
+}
+
+export function isTrustedFreezeAuthority(addr: string): boolean {
+  return TRUSTED_FREEZE_AUTHORITIES.has(addr);
+}
+
 export function getMaturitySignals(input: RiskScoreInput): number {
   const hasDeepLiquidity =
     input.liquidity?.liquidity_rating === "DEEP" ||
