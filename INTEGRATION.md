@@ -140,10 +140,10 @@ Returns comprehensive risk assessment for a single Solana token. Requires x402 p
 | `mint_authority` | `status` (RENOUNCED/ACTIVE), `authority`, `risk` |
 | `freeze_authority` | `status` (RENOUNCED/ACTIVE), `authority`, `risk` |
 | `supply` | `total`, `decimals` |
-| `top_holders` | `top_10_percentage`, `top_1_percentage`, `top_holders_detail`, `holder_count_estimate`, `note` |
-| `liquidity` | `has_liquidity`, `primary_pool`, `pool_address`, `price_impact_pct`, `liquidity_rating`, `lp_locked`, `lp_lock_percentage`, `lp_mint`, `lp_locker` |
-| `metadata` | `status`, `mutable`, `update_authority`, `has_uri`, `uri`, `risk` |
-| `honeypot` | `status`, `can_sell`, `sell_tax_bps`, `risk` |
+| `top_holders` | `status` (OK/UNAVAILABLE), `top_10_percentage`, `top_1_percentage`, `top_holders_detail` (array of `{address, percentage}`), `holder_count_estimate`, `note`, `risk` (SAFE/HIGH/CRITICAL/UNKNOWN) |
+| `liquidity` | **null if unavailable.** `status` (OK/UNAVAILABLE), `has_liquidity`, `primary_pool`, `pool_address`, `price_impact_pct`, `liquidity_rating`, `lp_locked`, `lp_lock_percentage`, `lp_lock_expiry`, `lp_mint`, `lp_locker`, `risk` |
+| `metadata` | **null if unavailable.** `status` (OK/UNAVAILABLE), `mutable`, `update_authority`, `has_uri`, `uri`, `risk` |
+| `honeypot` | **null if unavailable.** `status` (OK/UNAVAILABLE), `can_sell`, `sell_tax_bps`, `risk` |
 | `token_age_hours` | Hours since creation (null if unknown) |
 | `token_age_minutes` | Minutes since creation (null if unknown) |
 | `created_at` | ISO 8601 creation timestamp (null if unknown) |
@@ -172,7 +172,7 @@ Returns comprehensive risk assessment for a single Solana token. Requires x402 p
 
 ### `GET /v1/check/lite?mint=<MINT>` — Quick Screening (Free)
 
-Rate-limited to 10 requests/minute per IP. Returns a risk preview with an upgrade CTA.
+Rate-limited to 30 requests/minute per IP. Returns a risk preview with an upgrade CTA.
 
 **Response fields:**
 
@@ -185,11 +185,16 @@ Rate-limited to 10 requests/minute per IP. Returns a risk preview with an upgrad
 | `risk_level` | string | LOW / MODERATE / HIGH / CRITICAL / EXTREME |
 | `summary` | string | Risk summary |
 | `degraded` | boolean | True if any check was unavailable |
+| `degraded_checks` | string[] | Names of checks that failed (empty if not degraded) |
+| `checks_completed` | number | Number of checks that succeeded (out of `checks_total`) |
+| `checks_total` | number | Total checks attempted (currently 6) |
 | `is_token_2022` | boolean | Whether token uses Token-2022 |
 | `has_risky_extensions` | boolean | Whether risky Token-2022 extensions detected |
 | `can_sell` | boolean \| null | Whether token can be sold (from honeypot check, null if unavailable) |
 | `authorities_renounced` | boolean | True if both mint and freeze authorities are renounced |
 | `has_liquidity` | boolean | Whether any liquidity pool was detected |
+| `liquidity_rating` | string \| null | DEEP / MODERATE / SHALLOW / NONE (null if unavailable) |
+| `top_10_concentration` | number \| null | Top 10 holder percentage (null if unavailable) |
 | `token_age_hours` | number \| null | Hours since token creation (null if unknown) |
 | `risk_score_delta` | number \| null | Score change vs previous check (positive = riskier, null on first check) |
 | `previous_risk_score` | number \| null | Risk score at previous check (null on first check) |
@@ -198,7 +203,7 @@ Rate-limited to 10 requests/minute per IP. Returns a risk preview with an upgrad
 
 ### `GET /v1/decide?mint=<MINT>&threshold=N` — Binary Decision (Free)
 
-Rate-limited to 10 requests/minute per IP. Returns a SAFE/RISKY/UNKNOWN decision based on the risk score vs a configurable threshold.
+Rate-limited to 30 requests/minute per IP. Returns a SAFE/RISKY/UNKNOWN decision based on the risk score vs a configurable threshold.
 
 **Query parameters:**
 
@@ -216,6 +221,8 @@ Rate-limited to 10 requests/minute per IP. Returns a SAFE/RISKY/UNKNOWN decision
 | `risk_score` | number | 0-100 (0 = safest) |
 | `risk_level` | string | LOW / MODERATE / HIGH / CRITICAL / EXTREME |
 | `threshold_used` | number | The threshold applied (clamped to 0-100) |
+| `note` | string \| undefined | Present when `decision` is UNKNOWN — explains degradation and suggests retry |
+| `degraded_checks` | string[] \| undefined | Present when `decision` is UNKNOWN — names of checks that failed |
 | `full_report` | object | Structured CTA for full paid analysis |
 
 ### `POST /v1/check/batch/small` — Batch Check, 5 Tokens ($0.025 USDC)
@@ -340,6 +347,12 @@ MCP endpoint for tool discovery by AI agents (Claude Desktop, Cursor, Windsurf).
 |------|-------------|
 | `solana_token_safety_check` | Free safety check — risk score, summary, Token-2022 detection. Full report via x402 REST API at `/v1/check` |
 
+### `GET /metrics` — Prometheus Metrics (Bearer)
+
+Returns Prometheus text-format metrics. Requires `Authorization: Bearer <WEBHOOK_ADMIN_BEARER>`. Returns 404 if bearer not configured.
+
+Metrics include: `tokensafe_http_request_duration_seconds`, `tokensafe_http_requests_total`, `tokensafe_token_checks_total`, `tokensafe_api_key_requests_total`, `tokensafe_cache_hit_ratio`, `tokensafe_degraded_checks_total`, `tokensafe_rpc_latency_seconds`, plus default Node.js process metrics.
+
 ### `GET /.well-known/x402` — Discovery Document (Free)
 
 Returns x402 discovery metadata for automated service registration. Includes available resources, pricing, rate limits, and checks performed.
@@ -362,11 +375,13 @@ Returns x402 discovery metadata for automated service registration. Includes ava
 | `INVALID_MINT_ADDRESS` | 400 | Mint address is not valid base58 |
 | `TOKEN_NOT_FOUND` | 404 | Mint account doesn't exist on chain |
 | `RPC_ERROR` | 503 | Solana RPC unavailable — retry later |
-| `RATE_LIMIT_EXCEEDED` | 429 | Too many requests -- check `X-RateLimit-Reset` header |
+| `RATE_LIMITED` | 429 | Too many requests -- check `X-RateLimit-Reset` header |
 | `INVALID_API_KEY` | 401 | API key not found or revoked |
 | `API_KEY_EXPIRED` | 401 | API key past its expiration date |
 | `API_KEY_LIMIT_EXCEEDED` | 429 | Monthly usage limit reached for API key tier |
+| `TOO_MANY_MINTS` | 400 | Batch/audit request exceeds tier's max tokens |
 | `AUDIT_NOT_FOUND` | 404 | Audit ID not found or expired |
+| `TIMEOUT` | 504 | Request timed out after 30 seconds |
 | `INTERNAL_ERROR` | 500 | Unexpected server error |
 
 All errors return structured JSON: `{ "error": { "code": "...", "message": "...", "details": "..." } }`
@@ -383,7 +398,7 @@ All errors return structured JSON: `{ "error": { "code": "...", "message": "..."
 | `X-RateLimit-Reset` | Unix timestamp when limit resets |
 | `Cache-Control` | `public, max-age=300` on free endpoints; `private, no-store` on paid |
 | `Vary` | `Accept-Encoding` on free endpoints |
-| `Access-Control-Allow-Origin` | `*` on free endpoints (CORS) |
+| `Access-Control-Allow-Origin` | `*` on all `/v1/*` endpoints (CORS) |
 
 ## Verifying Response Signatures
 
@@ -414,6 +429,19 @@ const pubKey = crypto.createPublicKey({
 });
 const valid = crypto.verify(null, digest, pubKey, Buffer.from(data.response_signature, "hex"));
 ```
+
+## Handling Degraded Results
+
+When `degraded: true`, some on-chain checks couldn't complete (RPC timeout, rate limit, etc.).
+The `degraded_checks` array tells you which checks failed.
+
+**What it means for risk_score:** Uncertainty penalties are added (+5 to +10 per missing check).
+The score may overestimate risk — a token scoring 25 (MODERATE) when degraded might score 15 (LOW) when fully resolved.
+
+**Recommended agent behavior:**
+1. If `risk_score <= threshold` despite degradation, still SAFE (penalties make it conservative)
+2. If `risk_score > threshold` and degraded, retry after 30s before rejecting
+3. For critical decisions, use the full paid endpoint which has longer timeouts
 
 ## Caching
 

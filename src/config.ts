@@ -1,3 +1,4 @@
+import { PublicKey } from "@solana/web3.js";
 import dotenv from "dotenv";
 dotenv.config({ quiet: true });
 
@@ -29,7 +30,7 @@ export const config = {
       : "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
   rateLimitPerMinute: parseInt(process.env.RATE_LIMIT_PER_MINUTE || "60", 10),
   liteRateLimitPerMinute: parseInt(
-    process.env.LITE_RATE_LIMIT_PER_MINUTE || "10",
+    process.env.LITE_RATE_LIMIT_PER_MINUTE || "30",
     10,
   ),
   ownershipProof: process.env.X402_OWNERSHIP_PROOF || "",
@@ -44,3 +45,20 @@ export const config = {
   proRateLimit: parseInt(process.env.PRO_RATE_LIMIT || "200", 10),
   enterpriseRateLimit: parseInt(process.env.ENTERPRISE_RATE_LIMIT || "600", 10),
 } as const;
+
+// Startup validation
+try {
+  new PublicKey(config.treasuryWallet);
+} catch {
+  throw new Error(
+    `TREASURY_WALLET_ADDRESS is not a valid Solana address: ${config.treasuryWallet}`,
+  );
+}
+if (!Number.isFinite(config.port) || config.port < 1 || config.port > 65535) {
+  throw new Error(`Invalid PORT: ${process.env.PORT}`);
+}
+for (const [key, val] of Object.entries(config)) {
+  if (typeof val === "number" && !Number.isFinite(val)) {
+    throw new Error(`Invalid numeric config: ${key}`);
+  }
+}

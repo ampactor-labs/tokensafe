@@ -1,6 +1,7 @@
 import { LRUCache } from "lru-cache";
 import type { TokenCheckResult } from "../analysis/token-checker.js";
 import { ApiError, type ErrorCode } from "./errors.js";
+import { cacheHitRatio } from "./metrics.js";
 
 // === Primary cache (positive results) ===
 const cache = new LRUCache<string, TokenCheckResult>({
@@ -17,6 +18,10 @@ export function getCached(mint: string): TokenCheckResult | undefined {
     hits++;
   } else {
     misses++;
+  }
+  const total = hits + misses;
+  if (total > 0) {
+    cacheHitRatio.set(hits / total);
   }
   return result;
 }
