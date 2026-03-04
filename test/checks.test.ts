@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 import { PublicKey } from "@solana/web3.js";
 
 // ── Mocks (declared before imports per vitest hoisting) ─────────────
@@ -459,16 +459,43 @@ describe("checkMintAccount", () => {
 // ════════════════════════════════════════════════════════════════════
 
 describe("checkTopHolders", () => {
-  let conn: ReturnType<typeof fakeConnection>;
+  let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
     vi.restoreAllMocks();
-    conn = fakeConnection();
-    (getConnection as Mock).mockReturnValue(conn);
+    originalFetch = globalThis.fetch;
   });
 
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function mockRpcResponse(value: Array<{ address: string; amount: string }>) {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { value } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  }
+
+  function mockRpcError(message: string) {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { message } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  }
+
+  function mockFetchReject(err: Error) {
+    globalThis.fetch = vi.fn().mockRejectedValue(err);
+  }
+
+  const ADDR = SOME_PUBKEY.toBase58();
+
   it("returns zeros for zero supply", async () => {
-    conn.getTokenLargestAccounts.mockResolvedValue({ value: [] });
+    mockRpcResponse([]);
     const result = await checkTopHolders(MINT, 0n);
     expect(result.top_10_percentage).toBe(0);
     expect(result.holder_count_estimate).toBe(0);
@@ -476,7 +503,7 @@ describe("checkTopHolders", () => {
   });
 
   it("returns UNAVAILABLE when accounts empty but supply non-zero", async () => {
-    conn.getTokenLargestAccounts.mockResolvedValue({ value: [] });
+    mockRpcResponse([]);
     const result = await checkTopHolders(MINT, 1000n);
     expect(result.status).toBe("UNAVAILABLE");
     expect(result.risk).toBe("UNKNOWN");
@@ -484,12 +511,10 @@ describe("checkTopHolders", () => {
   });
 
   it("flags HIGH when top1 > 20%", async () => {
-    conn.getTokenLargestAccounts.mockResolvedValue({
-      value: [
-        { address: SOME_PUBKEY, amount: "300" },
-        { address: SOME_PUBKEY, amount: "100" },
-      ],
-    });
+    mockRpcResponse([
+      { address: ADDR, amount: "300" },
+      { address: ADDR, amount: "100" },
+    ]);
     const result = await checkTopHolders(MINT, 1000n);
     expect(result.top_1_percentage).toBe(30);
     expect(result.risk).toBe("HIGH");
@@ -498,22 +523,20 @@ describe("checkTopHolders", () => {
   it("flags HIGH when top10 > 50%", async () => {
     // 6 holders each with 100/1000 = 10%, total 60%
     const accounts = Array.from({ length: 6 }, () => ({
-      address: SOME_PUBKEY,
+      address: ADDR,
       amount: "100",
     }));
-    conn.getTokenLargestAccounts.mockResolvedValue({ value: accounts });
+    mockRpcResponse(accounts);
     const result = await checkTopHolders(MINT, 1000n);
     expect(result.top_10_percentage).toBe(60);
     expect(result.risk).toBe("HIGH");
   });
 
   it("flags CRITICAL when both top1 > 20% and top10 > 50%", async () => {
-    conn.getTokenLargestAccounts.mockResolvedValue({
-      value: [
-        { address: SOME_PUBKEY, amount: "600" },
-        { address: SOME_PUBKEY, amount: "100" },
-      ],
-    });
+    mockRpcResponse([
+      { address: ADDR, amount: "600" },
+      { address: ADDR, amount: "100" },
+    ]);
     const result = await checkTopHolders(MINT, 1000n);
     expect(result.top_1_percentage).toBe(60);
     expect(result.top_10_percentage).toBe(70);
@@ -522,53 +545,49 @@ describe("checkTopHolders", () => {
 
   it("returns exact count when < 20 holders", async () => {
     const accounts = Array.from({ length: 5 }, () => ({
-      address: SOME_PUBKEY,
+      address: ADDR,
       amount: "10",
     }));
-    conn.getTokenLargestAccounts.mockResolvedValue({ value: accounts });
+    mockRpcResponse(accounts);
     const result = await checkTopHolders(MINT, 10000n);
     expect(result.holder_count_estimate).toBe(5);
   });
 
   it("returns null count when 20 holders (max RPC window)", async () => {
     const accounts = Array.from({ length: 20 }, () => ({
-      address: SOME_PUBKEY,
+      address: ADDR,
       amount: "10",
     }));
-    conn.getTokenLargestAccounts.mockResolvedValue({ value: accounts });
+    mockRpcResponse(accounts);
     const result = await checkTopHolders(MINT, 10000n);
     expect(result.holder_count_estimate).toBeNull();
   });
 
   it("returns top_holders_detail with addresses and percentages", async () => {
-    conn.getTokenLargestAccounts.mockResolvedValue({
-      value: [
-        { address: SOME_PUBKEY, amount: "300" },
-        { address: SOME_PUBKEY, amount: "200" },
-      ],
-    });
+    mockRpcResponse([
+      { address: ADDR, amount: "300" },
+      { address: ADDR, amount: "200" },
+    ]);
     const result = await checkTopHolders(MINT, 1000n);
     expect(result.top_holders_detail).toHaveLength(2);
     expect(result.top_holders_detail![0]).toEqual({
-      address: SOME_PUBKEY.toBase58(),
+      address: ADDR,
       percentage: 30,
     });
     expect(result.top_holders_detail![1]).toEqual({
-      address: SOME_PUBKEY.toBase58(),
+      address: ADDR,
       percentage: 20,
     });
   });
 
   it("returns null top_holders_detail for zero supply", async () => {
-    conn.getTokenLargestAccounts.mockResolvedValue({ value: [] });
+    mockRpcResponse([]);
     const result = await checkTopHolders(MINT, 0n);
     expect(result.top_holders_detail).toBeNull();
   });
 
-  it("returns UNAVAILABLE/UNKNOWN when RPC fails (no DAS fallback)", async () => {
-    conn.getTokenLargestAccounts.mockRejectedValue(
-      new Error("Too many accounts provided; max 500"),
-    );
+  it("returns UNAVAILABLE/UNKNOWN when RPC returns error", async () => {
+    mockRpcError("Too many accounts provided; max 500");
 
     const result = await checkTopHolders(MINT, 1_000_000_000_000n);
     expect(result.status).toBe("UNAVAILABLE");
@@ -580,9 +599,7 @@ describe("checkTopHolders", () => {
   });
 
   it("returns UNAVAILABLE on connection timeout", async () => {
-    conn.getTokenLargestAccounts.mockRejectedValue(
-      new Error("Connection timeout"),
-    );
+    mockFetchReject(new Error("Connection timeout"));
     const result = await checkTopHolders(MINT, 1000n);
     expect(result.status).toBe("UNAVAILABLE");
     expect(result.risk).toBe("UNKNOWN");

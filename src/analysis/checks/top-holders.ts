@@ -1,5 +1,4 @@
-import { PublicKey } from "@solana/web3.js";
-import { getConnection } from "../../solana/rpc.js";
+import { config } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 
 export interface HolderDetail {
@@ -17,16 +16,38 @@ export interface TopHoldersResult {
   risk: "SAFE" | "HIGH" | "CRITICAL" | "UNKNOWN";
 }
 
+const TOP_HOLDERS_TIMEOUT_MS = 15_000;
+
+async function getTokenLargestAccountsDirect(
+  mintAddress: string,
+): Promise<Array<{ address: string; amount: string }>> {
+  const res = await fetch(config.heliusRpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "getTokenLargestAccounts",
+      params: [mintAddress],
+    }),
+    signal: AbortSignal.timeout(TOP_HOLDERS_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`RPC HTTP ${res.status}`);
+  const json = (await res.json()) as {
+    error?: { message: string };
+    result?: { value: Array<{ address: string; amount: string }> };
+  };
+  if (json.error) throw new Error(json.error.message);
+  return json.result!.value;
+}
+
 export async function checkTopHolders(
   mintAddress: string,
   totalSupplyRaw: bigint,
 ): Promise<TopHoldersResult> {
-  const connection = getConnection();
-  let largestAccounts;
+  let accounts;
   try {
-    largestAccounts = await connection.getTokenLargestAccounts(
-      new PublicKey(mintAddress),
-    );
+    accounts = await getTokenLargestAccountsDirect(mintAddress);
   } catch (err) {
     logger.warn(
       { err: err instanceof Error ? err.message : String(err), mintAddress },
@@ -36,8 +57,6 @@ export async function checkTopHolders(
       "Top holder data unavailable (RPC error) — concentration unknown",
     );
   }
-
-  const accounts = largestAccounts.value;
 
   if (totalSupplyRaw === 0n) {
     return {

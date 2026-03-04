@@ -17,6 +17,8 @@ import {
   getRiskFactors,
   generateRiskSummary,
   METHODOLOGY_VERSION,
+  isTrustedMintAuthority,
+  isTrustedFreezeAuthority,
 } from "./risk-score.js";
 import { ApiError } from "../utils/errors.js";
 import { degradedChecksTotal, rpcLatency } from "../utils/metrics.js";
@@ -409,12 +411,12 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
       mint_authority: {
         status: mintData.mintAuthority === null ? "RENOUNCED" : "ACTIVE",
         authority: mintData.mintAuthority,
-        risk: mintData.mintAuthority === null ? "SAFE" : "DANGEROUS",
+        risk: mintData.mintAuthority === null || isTrustedMintAuthority(mintData.mintAuthority) ? "SAFE" : "DANGEROUS",
       },
       freeze_authority: {
         status: mintData.freezeAuthority === null ? "RENOUNCED" : "ACTIVE",
         authority: mintData.freezeAuthority,
-        risk: mintData.freezeAuthority === null ? "SAFE" : "DANGEROUS",
+        risk: mintData.freezeAuthority === null || isTrustedFreezeAuthority(mintData.freezeAuthority) ? "SAFE" : "DANGEROUS",
       },
       supply: {
         total: mintData.supplyRaw.toString(),
