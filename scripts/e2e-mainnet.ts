@@ -192,6 +192,8 @@ async function main() {
     assert(body.risk_level === "LOW", `expected LOW, got ${body.risk_level}`);
     assert(body.authorities_renounced === true, "wSOL authorities not renounced");
     assert(body.has_liquidity === true, "wSOL missing liquidity");
+    assert(typeof body.liquidity_rating === "string", "missing liquidity_rating");
+    assert(body.top_10_concentration === null || typeof body.top_10_concentration === "number", "bad top_10_concentration type");
     // Paid-only fields MUST be absent
     assert(body.checks === undefined, "lite leaks checks");
     assert(body.response_signature === undefined, "lite leaks response_signature");
@@ -460,6 +462,7 @@ async function main() {
     assert(res.status === 200, `expected 200 (not 402!), got ${res.status}`);
     assert(res.headers.get("x-api-key-tier") === "pro", `expected tier pro, got ${res.headers.get("x-api-key-tier")}`);
     assert(res.headers.get("x-api-key-usage") !== null, "missing X-API-Key-Usage");
+    assert(res.headers.get("access-control-allow-origin") === "*", "missing CORS on paid endpoint");
     const body = await res.json() as any;
     assert(body.checks.mint_authority.status === "RENOUNCED", `wSOL mint_authority not RENOUNCED`);
     assert(body.checks.freeze_authority.status === "RENOUNCED", `wSOL freeze_authority not RENOUNCED`);
@@ -494,6 +497,8 @@ async function main() {
     });
     assert(res.status === 200, `expected 200, got ${res.status}`);
     const body = await res.json() as any;
+    assert(res.headers.get("x-cache") !== null, "missing X-Cache on batch");
+    assert(res.headers.get("access-control-allow-origin") === "*", "missing CORS on batch");
     assert(body.total === 5, `expected total=5, got ${body.total}`);
     assert(body.succeeded >= 3, `expected ≥3 succeeded, got ${body.succeeded}`);
     log(`total=${body.total} succeeded=${body.succeeded} failed=${body.failed}`);

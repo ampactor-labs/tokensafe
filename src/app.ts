@@ -75,6 +75,21 @@ app.use((req, res, next) => {
   next();
 });
 
+// 1b. CORS preflight for all /v1/* routes (including paid endpoints)
+app.options("/v1/*path", (_req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PATCH, DELETE, OPTIONS",
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, X-API-Key, Authorization, PAYMENT-SIGNATURE",
+  );
+  res.setHeader("Access-Control-Max-Age", "86400");
+  res.status(204).end();
+});
+
 // 2. Latency tracking
 app.use((req, res, next) => {
   const start = Date.now();
@@ -153,7 +168,7 @@ app.get("/.well-known/x402", (_req, res) => {
       "| Endpoint | Price | Description |",
       "|----------|-------|-------------|",
       "| `GET /v1/check?mint=<ADDR>` | $0.008 USDC | Full safety analysis |",
-      "| `GET /v1/check/lite?mint=<ADDR>` | Free | Risk score, name, symbol, extensions |",
+      "| `GET /v1/check/lite?mint=<ADDR>` | Free | Risk score, level, summary, liquidity rating, holder concentration, honeypot, delta detection |",
       "| `GET /v1/decide?mint=<ADDR>&threshold=N` | Free | Binary SAFE/RISKY/UNKNOWN decision |",
       "| `POST /v1/check/batch/small` | $0.025 (up to 5) | Batch safety check |",
       "| `POST /v1/check/batch/medium` | $0.08 (up to 20) | Batch safety check |",
@@ -164,7 +179,9 @@ app.get("/.well-known/x402", (_req, res) => {
       "| `GET /v1/audit/:id/report` | API key or Bearer | Compliance report (markdown) |",
       "| `POST /v1/webhooks` | Bearer auth | Webhook subscription management (CRUD) |",
       "| `POST /v1/api-keys` | Bearer auth | API key management (CRUD) |",
+      "| `POST /mcp` | Free | MCP Streamable HTTP — AI agent tool discovery |",
       "| `GET /health` | Free | Server status |",
+      "| `GET /metrics` | Bearer auth | Prometheus metrics |",
       "",
       "## Authentication",
       "",
@@ -176,7 +193,7 @@ app.get("/.well-known/x402", (_req, res) => {
       "",
       "- Paid endpoints (x402): 60 req/min per IP",
       "- Paid endpoints (API key): per-tier rate limit",
-      "- Lite endpoint: 10 req/min per IP",
+      "- Lite endpoint: 30 req/min per IP",
       "- Cached results (< 5min): instant response",
       "",
       "## Checks Performed",
@@ -296,6 +313,10 @@ app.get("/v1/decide", liteRateLimiter, async (req, res, next) => {
       risk_score: result.risk_score,
       risk_level: result.risk_level,
       threshold_used: threshold,
+      ...(decision === "UNKNOWN" && {
+        note: "Some safety checks failed. Risk score includes uncertainty penalties. Retry in 30s or use /v1/check for full details.",
+        degraded_checks: result.degraded_checks,
+      }),
       full_report: result.full_report,
     });
   } catch (err) {
@@ -882,6 +903,12 @@ function batchHandler(maxTokens: number) {
 
       tokenChecksTotal.labels("batch").inc();
 
+      const anyBatchCached = settled.some(
+        (o) => o.status === "fulfilled" && o.value.fromCache,
+      );
+      res.setHeader("X-Cache", anyBatchCached ? "PARTIAL" : "MISS");
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Access-Control-Allow-Origin", "*");
       res.json({
         total: mints.length,
         succeeded,
@@ -1019,6 +1046,12 @@ function auditHandler(maxTokens: number) {
 
       tokenChecksTotal.labels("audit").inc();
 
+      const anyAuditCached = settled.some(
+        (o) => o.status === "fulfilled" && o.value.fromCache,
+      );
+      res.setHeader("X-Cache", anyAuditCached ? "PARTIAL" : "MISS");
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Access-Control-Allow-Origin", "*");
       res.json({
         audit_id: auditId,
         created_at: createdAt,
@@ -1061,6 +1094,7 @@ app.get("/v1/check", async (req, res, next) => {
     tokenChecksTotal.labels(req.apiKeyRecord ? "api_key" : "x402").inc();
     res.setHeader("X-Cache", fromCache ? "HIT" : "MISS");
     res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("Access-Control-Allow-Origin", "*");
     res.json(result);
   } catch (err) {
     next(err);

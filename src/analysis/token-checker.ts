@@ -19,6 +19,7 @@ import {
   METHODOLOGY_VERSION,
 } from "./risk-score.js";
 import { ApiError } from "../utils/errors.js";
+import { degradedChecksTotal } from "../utils/metrics.js";
 import { logger } from "../utils/logger.js";
 import { reportRpcFailure, reportRpcSuccess } from "../solana/rpc.js";
 import {
@@ -122,6 +123,8 @@ export interface TokenCheckLiteResult {
   can_sell: boolean | null;
   authorities_renounced: boolean;
   has_liquidity: boolean;
+  liquidity_rating: string | null;
+  top_10_concentration: number | null;
   token_age_hours: number | null;
   risk_score_delta: number | null;
   previous_risk_score: number | null;
@@ -230,6 +233,11 @@ export async function checkTokenLite(
         result.checks.mint_authority.status === "RENOUNCED" &&
         result.checks.freeze_authority.status === "RENOUNCED",
       has_liquidity: result.checks.liquidity?.has_liquidity ?? false,
+      liquidity_rating: result.checks.liquidity?.liquidity_rating ?? null,
+      top_10_concentration:
+        result.checks.top_holders.status === "OK"
+          ? result.checks.top_holders.top_10_percentage
+          : null,
       token_age_hours: result.checks.token_age_hours ?? null,
       risk_score_delta: result.changes?.risk_score_delta ?? null,
       previous_risk_score: result.changes?.previous_risk_score ?? null,
@@ -352,6 +360,11 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
   if (tokenAge === null || (tokenAge.token_age_hours === null && !tokenAge.established))
     degradedChecks.push("token_age");
   const degraded = degradedChecks.length > 0;
+
+  // Instrument degraded checks for observability
+  for (const check of degradedChecks) {
+    degradedChecksTotal.labels(check).inc();
+  }
 
   const riskInput = {
     mint: mintData,

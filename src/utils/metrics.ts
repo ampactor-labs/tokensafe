@@ -33,3 +33,24 @@ export const apiKeyRequestsTotal = new client.Counter({
   labelNames: ["key_tier"] as const,
   registers: [registry],
 });
+
+export const cacheHitRatio = new client.Gauge({
+  name: "tokensafe_cache_hit_ratio",
+  help: "Cache hit ratio (0-1)",
+  registers: [registry],
+});
+
+export const degradedChecksTotal = new client.Counter({
+  name: "tokensafe_degraded_checks_total",
+  help: "Total degraded check results by check name",
+  labelNames: ["check"] as const,
+  registers: [registry],
+});
+
+export const rpcLatency = new client.Histogram({
+  name: "tokensafe_rpc_latency_seconds",
+  help: "RPC call latency in seconds",
+  labelNames: ["method"] as const,
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+  registers: [registry],
+});

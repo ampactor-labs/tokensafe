@@ -107,6 +107,8 @@ function makeLiteResult(
     can_sell: true,
     authorities_renounced: true,
     has_liquidity: true,
+    liquidity_rating: "DEEP",
+    top_10_concentration: 12.5,
     token_age_hours: 8760,
     risk_score_delta: null,
     previous_risk_score: null,
@@ -486,6 +488,29 @@ describe("GET /v1/check/lite enrichment", () => {
     expect(res.body.checks_completed).toBe(6);
     expect(res.body.checks_total).toBe(6);
   });
+
+  it("includes liquidity_rating and top_10_concentration", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult());
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.body.liquidity_rating).toBe("DEEP");
+    expect(res.body.top_10_concentration).toBe(12.5);
+  });
+
+  it("returns null liquidity_rating when liquidity unavailable", async () => {
+    mockCheckTokenLite.mockResolvedValue(
+      makeLiteResult({ liquidity_rating: null, has_liquidity: false }),
+    );
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.body.liquidity_rating).toBeNull();
+  });
+
+  it("returns null top_10_concentration when holders unavailable", async () => {
+    mockCheckTokenLite.mockResolvedValue(
+      makeLiteResult({ top_10_concentration: null }),
+    );
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.body.top_10_concentration).toBeNull();
+  });
 });
 
 describe("GET /v1/decide", () => {
@@ -507,12 +532,26 @@ describe("GET /v1/decide", () => {
     expect(res.body.risk_score).toBe(45);
   });
 
-  it("returns UNKNOWN when degraded", async () => {
+  it("returns UNKNOWN when degraded with note and degraded_checks", async () => {
     mockCheckTokenLite.mockResolvedValue(
-      makeLiteResult({ risk_score: 5, degraded: true }),
+      makeLiteResult({
+        risk_score: 5,
+        degraded: true,
+        degraded_checks: ["honeypot", "liquidity"],
+      }),
     );
     const res = await request(app).get(`/v1/decide?mint=${WSOL}`);
     expect(res.body.decision).toBe("UNKNOWN");
+    expect(res.body.note).toContain("Retry in 30s");
+    expect(res.body.degraded_checks).toEqual(["honeypot", "liquidity"]);
+  });
+
+  it("does not include note when decision is SAFE", async () => {
+    mockCheckTokenLite.mockResolvedValue(makeLiteResult({ risk_score: 5 }));
+    const res = await request(app).get(`/v1/decide?mint=${WSOL}`);
+    expect(res.body.decision).toBe("SAFE");
+    expect(res.body.note).toBeUndefined();
+    expect(res.body.degraded_checks).toBeUndefined();
   });
 
   it("uses default threshold of 30", async () => {
@@ -546,10 +585,21 @@ describe("CDN headers", () => {
     expect(res.headers["access-control-allow-origin"]).toBe("*");
   });
 
-  it("paid endpoint has private Cache-Control", async () => {
+  it("paid endpoint has private Cache-Control and CORS", async () => {
     mockCheckToken.mockResolvedValue(makeResult());
     const res = await request(app).get(`/v1/check?mint=${WSOL}`);
     expect(res.headers["cache-control"]).toBe("private, no-store");
+    expect(res.headers["access-control-allow-origin"]).toBe("*");
+  });
+
+  it("OPTIONS preflight returns CORS headers", async () => {
+    const res = await request(app).options("/v1/check");
+    expect(res.status).toBe(204);
+    expect(res.headers["access-control-allow-origin"]).toBe("*");
+    expect(res.headers["access-control-allow-methods"]).toContain("GET");
+    expect(res.headers["access-control-allow-headers"]).toContain(
+      "PAYMENT-SIGNATURE",
+    );
   });
 
   it("decide endpoint has public Cache-Control and CORS", async () => {
@@ -563,7 +613,7 @@ describe("CDN headers", () => {
 });
 
 describe("POST /v1/check/batch/*", () => {
-  it("batch/small returns results for valid mints", async () => {
+  it("batch/small returns results with X-Cache and CORS headers", async () => {
     mockCheckToken.mockResolvedValue(makeResult());
     const res = await request(app)
       .post("/v1/check/batch/small")
@@ -574,6 +624,8 @@ describe("POST /v1/check/batch/*", () => {
     expect(res.body.failed).toBe(0);
     expect(res.body.results).toHaveLength(1);
     expect(res.body.results[0].mint).toBe(WSOL);
+    expect(res.headers["x-cache"]).toBeDefined();
+    expect(res.headers["access-control-allow-origin"]).toBe("*");
   });
 
   it("batch/small rejects more than 5 mints", async () => {
