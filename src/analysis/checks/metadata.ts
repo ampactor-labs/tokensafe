@@ -1,5 +1,5 @@
 import { PublicKey } from "@solana/web3.js";
-import { getConnection } from "../../solana/rpc.js";
+import { getConnection, withRetry } from "../../solana/rpc.js";
 import { logger } from "../../utils/logger.js";
 
 const METAPLEX_PROGRAM_ID = new PublicKey(
@@ -31,12 +31,16 @@ export async function checkMetadata(
     METAPLEX_PROGRAM_ID,
   );
 
-  const accountInfo = await Promise.race([
-    connection.getAccountInfo(metadataPDA),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("Metadata RPC timeout")), 5000),
-    ),
-  ]);
+  const accountInfo = await withRetry(
+    () =>
+      Promise.race([
+        connection.getAccountInfo(metadataPDA),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Metadata RPC timeout")), 5000),
+        ),
+      ]),
+    "metadata",
+  );
   if (!accountInfo) {
     return null; // No Metaplex metadata — common for devnet tokens
   }

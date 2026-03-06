@@ -96,7 +96,11 @@ export async function checkLiquidity(
           lp_mint: null,
           lp_locker: null,
           pool_vault_addresses: null,
-          risk: dex.liquidity_rating === "SHALLOW" || dex.liquidity_rating === "NONE" ? "WARNING" : "SAFE",
+          risk:
+            dex.liquidity_rating === "SHALLOW" ||
+            dex.liquidity_rating === "NONE"
+              ? "WARNING"
+              : "SAFE",
         };
       }
       // DexScreener confirmed no pairs exist → genuine no-liquidity
@@ -113,7 +117,8 @@ export async function checkLiquidity(
     let lpLock: LpLockResult | null = null;
     if (
       jupiter.poolAddress &&
-      jupiter.primaryPool?.toLowerCase().includes("raydium")
+      jupiter.primaryPool?.toLowerCase().includes("raydium") &&
+      !jupiter.primaryPool?.toLowerCase().includes("clmm")
     ) {
       try {
         lpLock = await detectLpLock(jupiter.poolAddress);
@@ -182,8 +187,12 @@ async function detectLpLock(poolAddress: string): Promise<LpLockResult | null> {
   if (poolInfo.owner.toBase58() !== RAYDIUM_AMM_V4) return null;
   if (poolInfo.data.length !== RAYDIUM_AMM_V4_ACCOUNT_LEN) return null;
 
-  const baseVault = new PublicKey(poolInfo.data.subarray(BASE_VAULT_OFFSET, BASE_VAULT_OFFSET + 32)).toBase58();
-  const quoteVault = new PublicKey(poolInfo.data.subarray(QUOTE_VAULT_OFFSET, QUOTE_VAULT_OFFSET + 32)).toBase58();
+  const baseVault = new PublicKey(
+    poolInfo.data.subarray(BASE_VAULT_OFFSET, BASE_VAULT_OFFSET + 32),
+  ).toBase58();
+  const quoteVault = new PublicKey(
+    poolInfo.data.subarray(QUOTE_VAULT_OFFSET, QUOTE_VAULT_OFFSET + 32),
+  ).toBase58();
 
   const lpMintBytes = poolInfo.data.subarray(
     LP_MINT_OFFSET,

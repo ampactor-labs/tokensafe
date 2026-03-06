@@ -573,7 +573,10 @@ describe("data_confidence + X-Data-Confidence header", () => {
         data_confidence: "partial",
         degraded_note:
           "Warning: 2 of 6 checks failed (top_holders, liquidity). Score includes uncertainty penalties and may not reflect true risk. Retry or use full /v1/check for best accuracy.",
-        uncertainty_penalties: { uncertainty_top_holders: 10, uncertainty_liquidity: 10 },
+        uncertainty_penalties: {
+          uncertainty_top_holders: 10,
+          uncertainty_liquidity: 10,
+        },
       }),
     );
     const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
@@ -648,7 +651,10 @@ describe("data_confidence + X-Data-Confidence header", () => {
         degraded_checks: ["metadata", "token_age"],
         data_confidence: "partial",
         degraded_note: "Warning: 2 of 6 checks failed...",
-        uncertainty_penalties: { uncertainty_metadata: 3, uncertainty_token_age: 5 },
+        uncertainty_penalties: {
+          uncertainty_metadata: 3,
+          uncertainty_token_age: 5,
+        },
       }),
     );
     const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
@@ -1023,7 +1029,9 @@ describe("Webhook CRUD /v1/webhooks", () => {
 
   it("rejects webhook with private IP (SSRF prevention)", async () => {
     mockValidateWebhookUrl.mockRejectedValueOnce(
-      new Error("Resolved IP 127.0.0.1 for localhost is in a private/reserved range"),
+      new Error(
+        "Resolved IP 127.0.0.1 for localhost is in a private/reserved range",
+      ),
     );
     const res = await request(app)
       .post("/v1/webhooks")
@@ -1528,14 +1536,11 @@ describe("GET /v1/audit/history", () => {
   });
 
   it("rejects expired API key on audit history", async () => {
-    const expRes = await request(app)
-      .post("/v1/api-keys")
-      .set(AUTH)
-      .send({
-        label: "expired-audit",
-        tier: "pro",
-        expires_at: "2020-01-01T00:00:00Z",
-      });
+    const expRes = await request(app).post("/v1/api-keys").set(AUTH).send({
+      label: "expired-audit",
+      tier: "pro",
+      expires_at: "2020-01-01T00:00:00Z",
+    });
     const expiredKey = expRes.body.key;
     // Expired key should not grant audit read access — falls through to bearer check which also fails
     const res = await request(app)
@@ -1701,7 +1706,7 @@ describe("Batch endpoints", () => {
 });
 
 describe("degraded result caching (unit)", () => {
-  it("setCached skips degraded results (never cached)", async () => {
+  it("setCached caches degraded results with short TTL (30s)", async () => {
     // Test the real cache module directly (not mocked)
     const cache = await import("../src/utils/cache.js");
     cache.clearCache();
@@ -1715,7 +1720,8 @@ describe("degraded result caching (unit)", () => {
 
     cache.setCached(WSOL, degradedResult);
     const cached = cache.getCached(WSOL);
-    expect(cached).toBeUndefined(); // Degraded results are never cached
+    expect(cached).toBeDefined(); // Degraded results cached with 30s TTL
+    expect(cached!.degraded).toBe(true);
 
     cache.clearCache();
   });

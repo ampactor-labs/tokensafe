@@ -26,8 +26,13 @@ export function getCached(mint: string): TokenCheckResult | undefined {
   return result;
 }
 
+const DEGRADED_TTL_MS = 30_000;
+
 export function setCached(mint: string, result: TokenCheckResult): void {
-  if (result.degraded) return; // Never cache degraded — force fresh retry
+  if (result.degraded) {
+    cache.set(mint, result, { ttl: DEGRADED_TTL_MS });
+    return;
+  }
   cache.set(mint, result);
 }
 

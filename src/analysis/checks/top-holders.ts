@@ -1,6 +1,7 @@
 import { PublicKey } from "@solana/web3.js";
 import { config } from "../../config.js";
 import { logger } from "../../utils/logger.js";
+import { withRetry } from "../../solana/rpc.js";
 import { isKnownDefiProgram } from "./known-programs.js";
 
 export interface HolderDetail {
@@ -26,24 +27,26 @@ const TOP_HOLDERS_TIMEOUT_MS = 15_000;
 async function getTokenLargestAccountsDirect(
   mintAddress: string,
 ): Promise<Array<{ address: string; amount: string }>> {
-  const res = await fetch(config.heliusRpcUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "getTokenLargestAccounts",
-      params: [mintAddress],
-    }),
-    signal: AbortSignal.timeout(TOP_HOLDERS_TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`RPC HTTP ${res.status}`);
-  const json = (await res.json()) as {
-    error?: { message: string };
-    result?: { value: Array<{ address: string; amount: string }> };
-  };
-  if (json.error) throw new Error(json.error.message);
-  return json.result!.value;
+  return withRetry(async () => {
+    const res = await fetch(config.heliusRpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getTokenLargestAccounts",
+        params: [mintAddress],
+      }),
+      signal: AbortSignal.timeout(TOP_HOLDERS_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`RPC HTTP ${res.status}`);
+    const json = (await res.json()) as {
+      error?: { message: string };
+      result?: { value: Array<{ address: string; amount: string }> };
+    };
+    if (json.error) throw new Error(json.error.message);
+    return json.result!.value;
+  }, "getTokenLargestAccounts");
 }
 
 interface OwnerInfo {
@@ -65,6 +68,7 @@ interface OwnerInfo {
  */
 async function resolveOwners(
   tokenAccountAddresses: string[],
+  resolvePrograms = true,
 ): Promise<Map<string, OwnerInfo>> {
   const result = new Map<string, OwnerInfo>();
   if (tokenAccountAddresses.length === 0) return result;
@@ -124,7 +128,9 @@ async function resolveOwners(
   }
 
   // Phase 2: Resolve PDA owner addresses → their owning program
-  if (pdaOwners.length > 0) {
+  // Skipped when resolvePrograms=false (low-concentration tokens where PDA
+  // exclusion doesn't affect scoring)
+  if (resolvePrograms && pdaOwners.length > 0) {
     try {
       const res2 = await fetch(config.heliusRpcUrl, {
         method: "POST",
@@ -133,7 +139,10 @@ async function resolveOwners(
           jsonrpc: "2.0",
           id: 3,
           method: "getMultipleAccounts",
-          params: [pdaOwners, { encoding: "base64", dataSlice: { offset: 0, length: 0 } }],
+          params: [
+            pdaOwners,
+            { encoding: "base64", dataSlice: { offset: 0, length: 0 } },
+          ],
         }),
         signal: AbortSignal.timeout(5_000),
       });
@@ -205,11 +214,24 @@ export async function checkTopHolders(
     );
   }
 
+  // Quick concentration check to decide if Phase 2 PDA resolution is needed.
+  // Phase 2 costs 0-1 extra RPC — skip for low-concentration tokens where
+  // PDA exclusion wouldn't affect scoring (top10 <30% AND top1 <10%).
+  const SCALE_QUICK = 10000n;
+  const quickTop10 = accounts
+    .slice(0, 10)
+    .reduce((s, a) => s + BigInt(a.amount), 0n);
+  const quickTop1 = BigInt(accounts[0].amount);
+  const needsPhase2 =
+    totalSupplyRaw > 0n &&
+    (Number((quickTop10 * SCALE_QUICK) / totalSupplyRaw) / 100 > 30 ||
+      Number((quickTop1 * SCALE_QUICK) / totalSupplyRaw) / 100 > 10);
+
   // Resolve owners to classify PDA (protocol) vs wallet accounts
   let ownerMap: Map<string, OwnerInfo> | null = null;
   try {
     const addresses = accounts.slice(0, 10).map((a) => a.address);
-    ownerMap = await resolveOwners(addresses);
+    ownerMap = await resolveOwners(addresses, needsPhase2);
   } catch (err) {
     logger.warn(
       { err: err instanceof Error ? err.message : String(err), mintAddress },
@@ -247,14 +269,19 @@ function computeConcentration(
   // Build enriched holder details with owner + PDA classification
   // is_protocol_account = true only when off-curve AND owned by a known DeFi program
   const top_holders_detail: HolderDetail[] = top10.map((a) => {
-    const addr = typeof a.address === "string" ? a.address : a.address.toBase58();
+    const addr =
+      typeof a.address === "string" ? a.address : a.address.toBase58();
     const info = ownerMap?.get(addr) ?? null;
     const isOffCurve = info?.isOnCurve === false;
-    const isKnownProgram = isOffCurve && info?.ownerProgram != null && isKnownDefiProgram(info.ownerProgram);
+    const isKnownProgram =
+      isOffCurve &&
+      info?.ownerProgram != null &&
+      isKnownDefiProgram(info.ownerProgram);
     return {
       address: addr,
       percentage:
-        Math.round(Number((BigInt(a.amount) * SCALE) / totalSupplyRaw)) / 10_000,
+        Math.round(Number((BigInt(a.amount) * SCALE) / totalSupplyRaw)) /
+        10_000,
       owner: info?.owner ?? null,
       owner_program: info?.ownerProgram ?? null,
       is_protocol_account: isKnownProgram,
@@ -276,13 +303,19 @@ function computeConcentration(
   let note: string | null = null;
 
   if (ownerMap && ownerMap.size > 0) {
-    const walletHolders = top_holders_detail.filter((h) => !h.is_protocol_account);
-    const pdaCount = top_holders_detail.filter((h) => h.is_protocol_account).length;
+    const walletHolders = top_holders_detail.filter(
+      (h) => !h.is_protocol_account,
+    );
+    const pdaCount = top_holders_detail.filter(
+      (h) => h.is_protocol_account,
+    ).length;
 
     if (pdaCount > 0 && walletHolders.length > 0) {
       // Recompute from wallet-only holders
       const adjTop10 = walletHolders.slice(0, 10);
-      top10Pct = Math.round(adjTop10.reduce((sum, h) => sum + h.percentage, 0) * 100) / 100;
+      top10Pct =
+        Math.round(adjTop10.reduce((sum, h) => sum + h.percentage, 0) * 100) /
+        100;
       top1Pct = Math.round(adjTop10[0].percentage * 100) / 100;
       note = `Adjusted for protocol account exclusion (${pdaCount} PDA-owned account${pdaCount > 1 ? "s" : ""} excluded from scoring)`;
     }

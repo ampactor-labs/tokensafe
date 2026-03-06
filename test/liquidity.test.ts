@@ -451,6 +451,56 @@ describe("checkLiquidity", () => {
   });
 });
 
+describe("CLMM pool LP lock skip", () => {
+  it("skips LP lock detection for Raydium CLMM pools", async () => {
+    const conn = {
+      getAccountInfo: vi.fn(),
+      getTokenLargestAccounts: vi.fn(),
+      getMultipleAccountsInfo: vi.fn(),
+    };
+    mockGetConnection.mockReturnValue(conn as never);
+
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({
+        primaryPool: "Raydium CLMM",
+        poolAddress: "58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2",
+      }),
+    );
+
+    // LP lock detection should NOT be attempted for CLMM
+    expect(conn.getAccountInfo).not.toHaveBeenCalled();
+    expect(result).not.toBeNull();
+    expect(result!.has_liquidity).toBe(true);
+    expect(result!.lp_locked).toBeNull();
+    expect(result!.primary_pool).toBe("Raydium CLMM");
+  });
+
+  it("still runs LP lock detection for Raydium AMM v4", async () => {
+    const lpMint = new PublicKey(
+      "9yy87vYzU4NgL2jF8yoFFtrRY7YbaW9mbtD6yMKkBjrf",
+    );
+    const poolAddr = "58oQChx4yWmvKdwLLZzBi4ChoCc2fqCUWBkwMihLYQo2";
+    const conn = {
+      getAccountInfo: vi.fn().mockResolvedValue(makePoolAccount(lpMint)),
+      getTokenLargestAccounts: vi.fn().mockResolvedValue({ value: [] }),
+      getMultipleAccountsInfo: vi.fn(),
+    };
+    mockGetConnection.mockReturnValue(conn as never);
+
+    await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({
+        primaryPool: "Raydium",
+        poolAddress: poolAddr,
+      }),
+    );
+
+    // LP lock detection SHOULD be attempted for Raydium AMM v4
+    expect(conn.getAccountInfo).toHaveBeenCalled();
+  });
+});
+
 describe("KNOWN_LOCKERS", () => {
   it("contains Streamflow address", () => {
     expect(
