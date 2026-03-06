@@ -84,3 +84,43 @@ export function resetRpcState(): void {
   consecutiveFailures = 0;
   circuitOpenUntil = 0;
 }
+
+// ---------------------------------------------------------------------------
+// Retry helper for transient RPC failures
+// ---------------------------------------------------------------------------
+
+const RETRYABLE_PATTERNS = [
+  "timeout",
+  "429",
+  "503",
+  "ECONNRESET",
+  "fetch failed",
+  "AbortError",
+];
+
+function isRetryable(err: unknown): boolean {
+  const msg = err instanceof Error ? `${err.name} ${err.message}` : String(err);
+  return RETRYABLE_PATTERNS.some((p) => msg.includes(p));
+}
+
+/**
+ * Retry a function exactly once on transient errors (timeout, 429, 503,
+ * ECONNRESET, fetch failed). 500ms delay before retry. Credit-constrained:
+ * one retry max.
+ */
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  label: string,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (!isRetryable(err)) throw err;
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err), label },
+      "Retrying after transient failure",
+    );
+    await new Promise((r) => setTimeout(r, 500));
+    return fn();
+  }
+}

@@ -1,6 +1,7 @@
 import { PublicKey } from "@solana/web3.js";
 import { getConnection } from "../../solana/rpc.js";
 import { logger } from "../../utils/logger.js";
+import { withRetry } from "../../solana/rpc.js";
 
 export interface TokenAgeResult {
   token_age_hours: number | null;
@@ -16,20 +17,19 @@ export async function checkTokenAge(
   const mintPubkey = new PublicKey(mintAddress);
 
   try {
-    // Fetch up to 100 signatures (returned newest-first).
-    // If 100 return, the token has >100 txs — established, no age penalty.
-    // If <100, we have the complete history and the last sig is creation time.
-    const sigPromise = connection.getSignaturesForAddress(mintPubkey, {
-      limit: 1000,
-    });
-    const sigs = await Promise.race([
-      sigPromise,
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Token age RPC timeout")), 5000),
-      ),
-    ]);
+    // Phase 1: Cheap probe — limit: 2 (1 RPC credit instead of 1000)
+    const probe = await withRetry(
+      () =>
+        Promise.race([
+          connection.getSignaturesForAddress(mintPubkey, { limit: 2 }),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("Token age RPC timeout")), 5000),
+          ),
+        ]),
+      "token-age-probe",
+    );
 
-    if (sigs.length === 0) {
+    if (probe.length === 0) {
       return {
         token_age_hours: null,
         token_age_minutes: null,
@@ -37,10 +37,26 @@ export async function checkTokenAge(
       };
     }
 
-    // Established token: 1000 sigs returned means >1000 txs total.
-    // We don't know actual creation time — oldest of last 1000 sigs
-    // could be minutes old for active tokens.
-    if (sigs.length === 1000) {
+    // 1 sig = exact creation time, done (no Phase 2 needed)
+    if (probe.length === 1) {
+      return ageFromSig(probe[0]);
+    }
+
+    // 2 sigs returned = need more data to determine established vs exact age
+    // Phase 2: limit: 100
+    const sigs = await withRetry(
+      () =>
+        Promise.race([
+          connection.getSignaturesForAddress(mintPubkey, { limit: 100 }),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("Token age RPC timeout")), 5000),
+          ),
+        ]),
+      "token-age-full",
+    );
+
+    // 100 sigs returned = established token (>100 txs total)
+    if (sigs.length === 100) {
       return {
         token_age_hours: null,
         token_age_minutes: null,
@@ -49,26 +65,31 @@ export async function checkTokenAge(
       };
     }
 
+    // <100 sigs = complete history, oldest sig is creation time
     const oldest = sigs[sigs.length - 1];
-    if (!oldest.blockTime) {
-      return {
-        token_age_hours: null,
-        token_age_minutes: null,
-        created_at: null,
-      };
-    }
-
-    const createdMs = oldest.blockTime * 1000;
-    const ageMs = Date.now() - createdMs;
-    const ageHours = Math.round((ageMs / (1000 * 60 * 60)) * 100) / 100;
-
-    return {
-      token_age_hours: Math.max(0, ageHours),
-      token_age_minutes: Math.max(0, Math.round(ageMs / 60_000)),
-      created_at: new Date(createdMs).toISOString(),
-    };
+    return ageFromSig(oldest);
   } catch (err) {
     logger.warn({ err, mintAddress }, "Token age check failed");
     return { token_age_hours: null, token_age_minutes: null, created_at: null };
   }
+}
+
+function ageFromSig(sig: { blockTime?: number | null }): TokenAgeResult {
+  if (!sig.blockTime) {
+    return {
+      token_age_hours: null,
+      token_age_minutes: null,
+      created_at: null,
+    };
+  }
+
+  const createdMs = sig.blockTime * 1000;
+  const ageMs = Date.now() - createdMs;
+  const ageHours = Math.round((ageMs / (1000 * 60 * 60)) * 100) / 100;
+
+  return {
+    token_age_hours: Math.max(0, ageHours),
+    token_age_minutes: Math.max(0, Math.round(ageMs / 60_000)),
+    created_at: new Date(createdMs).toISOString(),
+  };
 }

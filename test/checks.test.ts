@@ -1,13 +1,25 @@
-import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  type Mock,
+} from "vitest";
 import { PublicKey } from "@solana/web3.js";
 
 // ── Mocks (declared before imports per vitest hoisting) ─────────────
 
-vi.mock("../src/solana/rpc.js", () => ({
-  getConnection: vi.fn(),
-  reportRpcFailure: vi.fn(),
-  reportRpcSuccess: vi.fn(),
-}));
+vi.mock("../src/solana/rpc.js", async () => {
+  const actual = await vi.importActual("../src/solana/rpc.js");
+  return {
+    ...(actual as Record<string, unknown>),
+    getConnection: vi.fn(),
+    reportRpcFailure: vi.fn(),
+    reportRpcSuccess: vi.fn(),
+  };
+});
 
 vi.mock("@solana/spl-token", () => ({
   getMint: vi.fn(),
@@ -480,7 +492,9 @@ describe("checkTopHolders", () => {
   }
 
   // A known on-curve (wallet) address
-  const WALLET_OWNER = new PublicKey("9yy87vYzU4NgL2jF8yoFFtrRY7YbaW9mbtD6yMKkBjrf");
+  const WALLET_OWNER = new PublicKey(
+    "9yy87vYzU4NgL2jF8yoFFtrRY7YbaW9mbtD6yMKkBjrf",
+  );
   // A known off-curve (PDA) address — derived deterministically
   const PDA_OWNER = PublicKey.findProgramAddressSync(
     [Buffer.from("protocol")],
@@ -499,18 +513,29 @@ describe("checkTopHolders", () => {
       data: [buildTokenAccountBuffer(WALLET_OWNER), "base64"],
     }));
     // All owners are wallets (on-curve), so no Phase 2 call needed
-    globalThis.fetch = vi.fn()
+    globalThis.fetch = vi
+      .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { value } }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({ jsonrpc: "2.0", id: 1, result: { value } }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { value: ownersResponse } }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            result: { value: ownersResponse },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
       );
   }
 
@@ -537,30 +562,54 @@ describe("checkTopHolders", () => {
 
     const phase2Response = pdaOwnerAddresses.map((addr) => {
       const program = pdaProgramOwners?.get(addr);
-      return program ? { owner: program } : { owner: "11111111111111111111111111111111" };
+      return program
+        ? { owner: program }
+        : { owner: "11111111111111111111111111111111" };
     });
 
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { value: accounts } }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { value: accounts },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { value: ownersResponse } }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            result: { value: ownersResponse },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
       );
 
     // Only add Phase 2 mock if there are PDAs
     if (pdaOwnerAddresses.length > 0) {
       fetchMock.mockResolvedValueOnce(
-        new Response(JSON.stringify({ jsonrpc: "2.0", id: 3, result: { value: phase2Response } }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 3,
+            result: { value: phase2Response },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
       );
     }
 
@@ -569,10 +618,13 @@ describe("checkTopHolders", () => {
 
   function mockRpcError(message: string) {
     globalThis.fetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { message } }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({ jsonrpc: "2.0", id: 1, error: { message } }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
     );
   }
 
@@ -705,13 +757,10 @@ describe("checkTopHolders", () => {
     const ACCT_WALLET = "WalAcct111111111111111111111111111111111111";
     mockRpcWithOwners(
       [
-        { address: ACCT_PDA, amount: "600" },   // 60% — PDA owned by known program
+        { address: ACCT_PDA, amount: "600" }, // 60% — PDA owned by known program
         { address: ACCT_WALLET, amount: "200" }, // 20% — wallet
       ],
-      [
-        { pubkey: PDA_OWNER },
-        { pubkey: WALLET_OWNER },
-      ],
+      [{ pubkey: PDA_OWNER }, { pubkey: WALLET_OWNER }],
       new Map([[PDA_OWNER.toBase58(), KNOWN_PROGRAM]]),
     );
     const result = await checkTopHolders(MINT, 1000n);
@@ -742,12 +791,22 @@ describe("checkTopHolders", () => {
 
   it("falls back to raw concentration when resolveOwners fails", async () => {
     // First call succeeds (getTokenLargestAccounts), second fails (getMultipleAccounts)
-    globalThis.fetch = vi.fn()
+    globalThis.fetch = vi
+      .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({
-          jsonrpc: "2.0", id: 1,
-          result: { value: [{ address: ADDR, amount: "600" }, { address: ADDR, amount: "100" }] },
-        }), { status: 200, headers: { "Content-Type": "application/json" } }),
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: {
+              value: [
+                { address: ADDR, amount: "600" },
+                { address: ADDR, amount: "100" },
+              ],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
       )
       .mockRejectedValueOnce(new Error("RPC timeout"));
     const result = await checkTopHolders(MINT, 1000n);
@@ -769,10 +828,7 @@ describe("checkTopHolders", () => {
         { address: ACCT_A, amount: "600" },
         { address: ACCT_B, amount: "300" },
       ],
-      [
-        { pubkey: PDA_OWNER },
-        { pubkey: PDA_OWNER },
-      ],
+      [{ pubkey: PDA_OWNER }, { pubkey: PDA_OWNER }],
       new Map([[PDA_OWNER.toBase58(), KNOWN_PROGRAM]]),
     );
     const result = await checkTopHolders(MINT, 1000n);
@@ -792,7 +848,7 @@ describe("checkTopHolders", () => {
         { address: ACCT_PDA1, amount: "400" }, // 40% PDA (known program)
         { address: ACCT_WAL1, amount: "300" }, // 30% wallet
         { address: ACCT_PDA2, amount: "200" }, // 20% PDA (known program)
-        { address: ACCT_WAL2, amount: "50" },  // 5% wallet
+        { address: ACCT_WAL2, amount: "50" }, // 5% wallet
       ],
       [
         { pubkey: PDA_OWNER },
@@ -819,8 +875,8 @@ describe("checkTopHolders", () => {
         { address: ACCT_B, amount: "200" },
       ],
       [
-        null,                    // null → treated as wallet
-        { pubkey: PDA_OWNER },   // PDA owned by known program
+        null, // null → treated as wallet
+        { pubkey: PDA_OWNER }, // PDA owned by known program
       ],
       new Map([[PDA_OWNER.toBase58(), KNOWN_PROGRAM]]),
     );
@@ -838,14 +894,11 @@ describe("checkTopHolders", () => {
     const ACCT_WALLET = "WalAcct111111111111111111111111111111111111";
     mockRpcWithOwners(
       [
-        { address: ACCT_PDA, amount: "600" },   // 60% — PDA owned by UNKNOWN program
+        { address: ACCT_PDA, amount: "600" }, // 60% — PDA owned by UNKNOWN program
         { address: ACCT_WALLET, amount: "200" }, // 20% — wallet
       ],
-      [
-        { pubkey: PDA_OWNER },
-        { pubkey: WALLET_OWNER },
-      ],
-      new Map([[PDA_OWNER.toBase58(), UNKNOWN_PROGRAM]]),  // unknown program
+      [{ pubkey: PDA_OWNER }, { pubkey: WALLET_OWNER }],
+      new Map([[PDA_OWNER.toBase58(), UNKNOWN_PROGRAM]]), // unknown program
     );
     const result = await checkTopHolders(MINT, 1000n);
     // PDA owned by unknown program → NOT excluded → counted as wallet concentration
@@ -864,21 +917,35 @@ describe("checkTopHolders", () => {
       { data: [buildTokenAccountBuffer(PDA_OWNER), "base64"] },
       { data: [buildTokenAccountBuffer(WALLET_OWNER), "base64"] },
     ];
-    globalThis.fetch = vi.fn()
+    globalThis.fetch = vi
+      .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({
-          jsonrpc: "2.0", id: 1,
-          result: { value: [
-            { address: ACCT_PDA, amount: "600" },
-            { address: ACCT_WALLET, amount: "200" },
-          ] },
-        }), { status: 200, headers: { "Content-Type": "application/json" } }),
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: {
+              value: [
+                { address: ACCT_PDA, amount: "600" },
+                { address: ACCT_WALLET, amount: "200" },
+              ],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { value: ownersResponse } }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            result: { value: ownersResponse },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
       )
       .mockRejectedValueOnce(new Error("Phase 2 RPC timeout")); // Phase 2 fails
 
@@ -1115,36 +1182,61 @@ describe("checkTokenAge", () => {
     expect(result.token_age_minutes).toBeLessThanOrEqual(11);
   });
 
-  it("returns null time fields + established flag for 1000-sig token", async () => {
+  it("returns established flag for 100-sig token (adaptive two-phase)", async () => {
     const nowSec = Math.floor(Date.now() / 1000);
-    const sigs = Array.from({ length: 1000 }, (_, i) => ({
+    // Phase 1 probe (limit:2) → 2 sigs → needs Phase 2
+    conn.getSignaturesForAddress.mockResolvedValueOnce([
+      { blockTime: nowSec },
+      { blockTime: nowSec - 60 },
+    ]);
+    // Phase 2 (limit:100) → 100 sigs → established
+    const sigs100 = Array.from({ length: 100 }, (_, i) => ({
       blockTime: nowSec - i * 60,
     }));
-    conn.getSignaturesForAddress.mockResolvedValue(sigs);
+    conn.getSignaturesForAddress.mockResolvedValueOnce(sigs100);
     const result = await checkTokenAge(MINT);
     expect(result.established).toBe(true);
     expect(result.token_age_hours).toBeNull();
     expect(result.token_age_minutes).toBeNull();
     expect(result.created_at).toBeNull();
+    expect(conn.getSignaturesForAddress).toHaveBeenCalledTimes(2);
   });
 
-  it("returns established=true with null age when oldest 1000-sig has no blockTime", async () => {
-    const sigs = Array.from({ length: 1000 }, () => ({ blockTime: null }));
-    conn.getSignaturesForAddress.mockResolvedValue(sigs);
+  it("returns established=true with null age when Phase 2 returns 100 sigs with no blockTime", async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    conn.getSignaturesForAddress.mockResolvedValueOnce([
+      { blockTime: nowSec },
+      { blockTime: null },
+    ]);
+    const sigs100 = Array.from({ length: 100 }, () => ({ blockTime: null }));
+    conn.getSignaturesForAddress.mockResolvedValueOnce(sigs100);
     const result = await checkTokenAge(MINT);
     expect(result.established).toBe(true);
     expect(result.token_age_hours).toBeNull();
     expect(result.created_at).toBeNull();
   });
 
-  it("does not set established flag for < 1000 sig tokens", async () => {
+  it("does not set established flag for < 100 sig tokens", async () => {
     const nowSec = Math.floor(Date.now() / 1000);
-    conn.getSignaturesForAddress.mockResolvedValue([
+    // Phase 1 probe → 2 sigs → needs Phase 2
+    conn.getSignaturesForAddress.mockResolvedValueOnce([
       { blockTime: nowSec },
       { blockTime: nowSec - 7200 },
     ]);
+    // Phase 2 → 50 sigs (< 100) → not established, return oldest sig age
+    const sigs50 = Array.from({ length: 50 }, (_, i) => ({
+      blockTime: nowSec - i * 3600,
+    }));
+    conn.getSignaturesForAddress.mockResolvedValueOnce(sigs50);
     const result = await checkTokenAge(MINT);
     expect(result.established).toBeUndefined();
+    expect(result.token_age_hours).toBeGreaterThan(0);
+  });
+
+  it("uses only 1 RPC call for 0 or 1 sig tokens", async () => {
+    conn.getSignaturesForAddress.mockResolvedValue([]);
+    await checkTokenAge(MINT);
+    expect(conn.getSignaturesForAddress).toHaveBeenCalledTimes(1);
   });
 
   it("returns null age when RPC throws", async () => {
@@ -1497,3 +1589,59 @@ describe("checkTokenLite", () => {
   });
 });
 
+// ════════════════════════════════════════════════════════════════════
+// 9. withRetry
+// ════════════════════════════════════════════════════════════════════
+
+describe("withRetry", () => {
+  let withRetryFn: typeof import("../src/solana/rpc.js").withRetry;
+
+  beforeEach(async () => {
+    const rpc = await vi.importActual<typeof import("../src/solana/rpc.js")>(
+      "../src/solana/rpc.js",
+    );
+    withRetryFn = rpc.withRetry;
+  });
+
+  it("returns result on first success without retry", async () => {
+    const fn = vi.fn().mockResolvedValue("ok");
+    const result = await withRetryFn(fn, "test");
+    expect(result).toBe("ok");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries on timeout then succeeds", async () => {
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValueOnce("recovered");
+    const result = await withRetryFn(fn, "test");
+    expect(result).toBe("recovered");
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries on 429 then fails again", async () => {
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("429 Too Many Requests"))
+      .mockRejectedValueOnce(new Error("429 Too Many Requests"));
+    await expect(withRetryFn(fn, "test")).rejects.toThrow("429");
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry non-retryable errors", async () => {
+    const fn = vi.fn().mockRejectedValueOnce(new Error("Invalid mint address"));
+    await expect(withRetryFn(fn, "test")).rejects.toThrow("Invalid mint");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries on fetch failed", async () => {
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("fetch failed"))
+      .mockResolvedValueOnce("ok");
+    const result = await withRetryFn(fn, "test");
+    expect(result).toBe("ok");
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+});
