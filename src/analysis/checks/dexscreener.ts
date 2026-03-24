@@ -14,6 +14,12 @@ export interface DexScreenerLiquidity {
   liquidity_rating: "DEEP" | "MODERATE" | "SHALLOW" | "NONE";
 }
 
+interface DexScreenerPair {
+  dexId?: string;
+  pairAddress?: string;
+  liquidity?: { usd?: number };
+}
+
 export async function fetchDexScreenerLiquidity(
   mintAddress: string,
 ): Promise<DexScreenerLiquidity | null> {
@@ -22,7 +28,10 @@ export async function fetchDexScreenerLiquidity(
     const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
 
     if (!res.ok) {
-      logger.warn({ status: res.status, mintAddress }, "DexScreener HTTP error");
+      logger.warn(
+        { status: res.status, mintAddress },
+        "DexScreener HTTP error",
+      );
       return null;
     }
 
@@ -30,10 +39,10 @@ export async function fetchDexScreenerLiquidity(
     if (!Array.isArray(pairs) || pairs.length === 0) return null;
 
     // Find best pair by liquidity
-    let bestPair: any = null;
+    let bestPair: DexScreenerPair | null = null;
     let bestLiquidity = 0;
 
-    for (const pair of pairs) {
+    for (const pair of pairs as DexScreenerPair[]) {
       const liqUsd = pair.liquidity?.usd ?? 0;
       if (liqUsd > bestLiquidity) {
         bestLiquidity = liqUsd;
@@ -56,7 +65,9 @@ export async function fetchDexScreenerLiquidity(
   }
 }
 
-function deriveRatingFromUsd(usd: number): DexScreenerLiquidity["liquidity_rating"] {
+function deriveRatingFromUsd(
+  usd: number,
+): DexScreenerLiquidity["liquidity_rating"] {
   if (usd >= 100_000) return "DEEP";
   if (usd >= 10_000) return "MODERATE";
   if (usd >= 1_000) return "SHALLOW";
