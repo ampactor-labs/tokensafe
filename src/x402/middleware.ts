@@ -1,51 +1,61 @@
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { registerExactSvmScheme } from "@x402/svm/exact/server";
-import { SignJWT, importPKCS8 } from "jose";
+import { SignJWT, importJWK } from "jose";
 import crypto from "node:crypto";
 import { config } from "../config.js";
 
 /**
  * Build CDP JWT auth headers if CDP API keys are configured.
- * The CDP facilitator requires ES256 JWTs in the Authorization header.
+ * The CDP API key secret is a base64-encoded Ed25519 key (64 bytes: 32 seed + 32 pubkey).
+ * JWTs are signed with EdDSA and sent as Bearer tokens.
  */
 function buildCdpAuthHeaders() {
   if (!config.cdpApiKeyId || !config.cdpApiKeySecret) return undefined;
 
-  // The CDP key secret is a base64-encoded 64-byte Ed25519 seed — but the
-  // CDP platform actually uses ES256 (P-256 ECDSA). The private key from
-  // the portal is an EC key encoded as base64.
   return async () => {
     const now = Math.floor(Date.now() / 1000);
     const nonce = crypto.randomBytes(16).toString("hex");
 
-    // Import the EC private key from base64 PEM-like format
-    const pemKey = `-----BEGIN EC PRIVATE KEY-----\n${config.cdpApiKeySecret}\n-----END EC PRIVATE KEY-----`;
-    const privateKey = await importPKCS8(pemKey, "ES256");
+    // Decode the base64 Ed25519 key (64 bytes: 32 seed + 32 public key)
+    const decoded = Buffer.from(config.cdpApiKeySecret, "base64");
+    const seed = decoded.subarray(0, 32);
+    const publicKey = decoded.subarray(32);
 
-    const makeJwt = async (uri: string) =>
+    // Import as JWK for EdDSA signing (matches @coinbase/cdp-sdk jwt.ts)
+    const jwk = {
+      kty: "OKP" as const,
+      crv: "Ed25519",
+      d: seed.toString("base64url"),
+      x: publicKey.toString("base64url"),
+    };
+    const key = await importJWK(jwk, "EdDSA");
+
+    // Parse facilitator URL to get host + path
+    const url = new URL(config.facilitatorUrl);
+    const hostAndBase = `${url.host}${url.pathname}`;
+
+    const makeJwt = async (method: string, path: string) =>
       await new SignJWT({
         sub: config.cdpApiKeyId,
         iss: "cdp",
-        aud: ["cdp_service"],
-        nbf: now,
-        exp: now + 120,
-        uris: [uri],
-        nonce,
+        uris: [`${method} ${hostAndBase}${path}`],
       })
         .setProtectedHeader({
-          alg: "ES256",
+          alg: "EdDSA",
           kid: config.cdpApiKeyId,
           typ: "JWT",
           nonce,
         })
-        .sign(privateKey);
+        .setIssuedAt(now)
+        .setNotBefore(now)
+        .setExpirationTime(now + 120)
+        .sign(key);
 
-    const baseUrl = config.facilitatorUrl;
     const [verifyJwt, settleJwt, supportedJwt] = await Promise.all([
-      makeJwt(`${baseUrl}/verify`),
-      makeJwt(`${baseUrl}/settle`),
-      makeJwt(`${baseUrl}/supported`),
+      makeJwt("POST", "/verify"),
+      makeJwt("POST", "/settle"),
+      makeJwt("GET", "/supported"),
     ]);
 
     return {
