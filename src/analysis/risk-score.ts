@@ -186,7 +186,7 @@ export function computeRiskScore(input: RiskScoreInput): RiskScoreResult {
   // Uncertainty penalties for degraded checks
   if (input.degradedChecks && input.degradedChecks.length > 0) {
     const penalties: Record<string, number> = {
-      top_holders: 10,
+      top_holders: 20,
       liquidity: 10,
       honeypot: 10,
       token_age: 5,

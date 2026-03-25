@@ -616,7 +616,10 @@ describe("computeRiskScore", () => {
   it("floors authority penalties even with 3 maturity signals", () => {
     const result = computeRiskScore(
       makeInput({
-        mint: makeMint({ mintAuthority: "Attacker1", freezeAuthority: "Attacker2" }),
+        mint: makeMint({
+          mintAuthority: "Attacker1",
+          freezeAuthority: "Attacker2",
+        }),
         holders: makeHolders({ top_10_percentage: 15 }),
         liquidity: makeLiquidity({ liquidity_rating: "DEEP" }),
         tokenAge: makeAge({
@@ -732,7 +735,7 @@ describe("computeRiskScore", () => {
       }),
     );
     expect(result.breakdown.top_holders_10).toBe(25); // >80%
-    expect(result.breakdown.top_holders_1).toBe(25);  // >50%
+    expect(result.breakdown.top_holders_1).toBe(25); // >50%
   });
 
   it("skips mint authority penalty for PYUSD (Paxos)", () => {
@@ -758,12 +761,12 @@ describe("computeRiskScore", () => {
   });
 
   // --- Uncertainty penalties ---
-  it("adds +10 uncertainty for degraded top_holders", () => {
+  it("adds +20 uncertainty for degraded top_holders", () => {
     const result = computeRiskScore(
       makeInput({ degradedChecks: ["top_holders"] }),
     );
-    expect(result.risk_score).toBe(10);
-    expect(result.breakdown.uncertainty_top_holders).toBe(10);
+    expect(result.risk_score).toBe(20);
+    expect(result.breakdown.uncertainty_top_holders).toBe(20);
   });
 
   it("adds +10 uncertainty for degraded liquidity", () => {
@@ -801,12 +804,18 @@ describe("computeRiskScore", () => {
   it("sums multiple uncertainty penalties", () => {
     const result = computeRiskScore(
       makeInput({
-        degradedChecks: ["top_holders", "liquidity", "honeypot", "token_age", "metadata"],
+        degradedChecks: [
+          "top_holders",
+          "liquidity",
+          "honeypot",
+          "token_age",
+          "metadata",
+        ],
       }),
     );
-    // 10 + 10 + 10 + 5 + 3 = 38
-    expect(result.risk_score).toBe(38);
-    expect(result.risk_level).toBe("MODERATE");
+    // 20 + 10 + 10 + 5 + 3 = 48
+    expect(result.risk_score).toBe(48);
+    expect(result.risk_level).toBe("HIGH");
   });
 
   it("no uncertainty penalty when degradedChecks is empty", () => {
@@ -1041,8 +1050,12 @@ describe("getRiskFactors", () => {
     const factors = getRiskFactors(
       makeInput({ degradedChecks: ["honeypot", "liquidity"] }),
     );
-    expect(factors).toContain("honeypot data unavailable — score reflects uncertainty");
-    expect(factors).toContain("liquidity data unavailable — score reflects uncertainty");
+    expect(factors).toContain(
+      "honeypot data unavailable — score reflects uncertainty",
+    );
+    expect(factors).toContain(
+      "liquidity data unavailable — score reflects uncertainty",
+    );
   });
 });
 

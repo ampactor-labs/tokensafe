@@ -119,6 +119,7 @@ function makeLiteResult(
     has_risky_extensions: false,
     can_sell: true,
     authorities_renounced: true,
+    trusted_authority: false,
     has_liquidity: true,
     liquidity_rating: "DEEP",
     top_10_concentration: 12.5,
@@ -451,6 +452,22 @@ describe("GET /v1/check/lite enrichment", () => {
     expect(res.body.authorities_renounced).toBe(false);
   });
 
+  it("returns trusted_authority true for known issuer with active authority", async () => {
+    mockCheckTokenLite.mockResolvedValue(
+      makeLiteResult({ trusted_authority: true }),
+    );
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.body.trusted_authority).toBe(true);
+  });
+
+  it("returns trusted_authority false for unknown issuer", async () => {
+    mockCheckTokenLite.mockResolvedValue(
+      makeLiteResult({ trusted_authority: false }),
+    );
+    const res = await request(app).get(`/v1/check/lite?mint=${WSOL}`);
+    expect(res.body.trusted_authority).toBe(false);
+  });
+
   it("returns has_liquidity false when no liquidity", async () => {
     mockCheckTokenLite.mockResolvedValue(
       makeLiteResult({ has_liquidity: false }),
@@ -675,6 +692,7 @@ describe("GET /v1/decide", () => {
     expect(res.body.threshold_used).toBe(30);
     expect(res.body.mint).toBe(WSOL);
     expect(res.body.full_report).toBeDefined();
+    expect(res.body.score_reliable).toBe(true);
   });
 
   it("returns RISKY when risk_score > threshold", async () => {
@@ -696,6 +714,7 @@ describe("GET /v1/decide", () => {
     expect(res.body.decision).toBe("UNKNOWN");
     expect(res.body.note).toContain("Retry in 30s");
     expect(res.body.degraded_checks).toEqual(["honeypot", "liquidity"]);
+    expect(res.body.score_reliable).toBe(false);
   });
 
   it("does not include note when decision is SAFE", async () => {

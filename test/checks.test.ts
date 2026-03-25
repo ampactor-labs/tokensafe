@@ -73,6 +73,7 @@ import {
 import { checkTokenLite } from "../src/analysis/token-checker.js";
 import { getCached } from "../src/utils/cache.js";
 import type { TokenCheckResult } from "../src/analysis/token-checker.js";
+import { config } from "../src/config.js";
 
 // ── Test constants ──────────────────────────────────────────────────
 
@@ -963,6 +964,84 @@ describe("checkTopHolders", () => {
     expect(result.top_10_percentage).toBe(0);
     expect(result.holder_count_estimate).toBe(0);
     expect(result.risk).toBe("SAFE");
+  });
+
+  describe("backup RPC fallback", () => {
+    const BACKUP_URL = "https://backup-rpc.test";
+    const ADDR = "TokenAcct1111111111111111111111111111111111";
+
+    beforeEach(() => {
+      (config as { backupRpcUrl: string }).backupRpcUrl = BACKUP_URL;
+    });
+
+    afterEach(() => {
+      (config as { backupRpcUrl: string }).backupRpcUrl = "";
+    });
+
+    it("uses backup RPC when primary fails with non-retryable error", async () => {
+      const ownersBuf = buildTokenAccountBuffer(WALLET_OWNER);
+      // Primary getTokenLargestAccounts fails (non-retryable)
+      // Backup succeeds, then resolveOwners (Phase 1) succeeds
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              error: { message: "Too many accounts" },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        )
+        .mockResolvedValueOnce(
+          // Backup URL succeeds
+          new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              result: { value: [{ address: ADDR, amount: "500" }] },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        )
+        .mockResolvedValueOnce(
+          // resolveOwners Phase 1 (getMultipleAccounts for token accounts)
+          new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              result: { value: [{ data: [ownersBuf, "base64"] }] },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+
+      const result = await checkTopHolders(MINT, 1000n);
+      expect(result.status).toBe("OK");
+      expect(result.top_1_percentage).toBe(50);
+    });
+
+    it("returns UNAVAILABLE when both primary and backup fail", async () => {
+      // Primary fails (non-retryable), backup also fails
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              error: { message: "Too many accounts" },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        )
+        .mockRejectedValueOnce(new Error("Backup RPC unreachable"));
+
+      const result = await checkTopHolders(MINT, 1000n);
+      expect(result.status).toBe("UNAVAILABLE");
+      expect(result.risk).toBe("UNKNOWN");
+    });
   });
 });
 

@@ -27,8 +27,8 @@ const TOP_HOLDERS_TIMEOUT_MS = 15_000;
 async function getTokenLargestAccountsDirect(
   mintAddress: string,
 ): Promise<Array<{ address: string; amount: string }>> {
-  return withRetry(async () => {
-    const res = await fetch(config.heliusRpcUrl, {
+  async function fetchFromUrl(url: string) {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -46,7 +46,21 @@ async function getTokenLargestAccountsDirect(
     };
     if (json.error) throw new Error(json.error.message);
     return json.result!.value;
-  }, "getTokenLargestAccounts");
+  }
+
+  try {
+    return await withRetry(
+      () => fetchFromUrl(config.heliusRpcUrl),
+      "getTokenLargestAccounts",
+    );
+  } catch (primaryErr) {
+    if (!config.backupRpcUrl) throw primaryErr;
+    logger.warn(
+      { mintAddress },
+      "Primary RPC failed for top_holders, trying backup",
+    );
+    return await fetchFromUrl(config.backupRpcUrl);
+  }
 }
 
 interface OwnerInfo {
