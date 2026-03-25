@@ -980,7 +980,7 @@ describe("checkTopHolders", () => {
 
     it("uses backup RPC when primary fails with non-retryable error", async () => {
       const ownersBuf = buildTokenAccountBuffer(WALLET_OWNER);
-      // Primary getTokenLargestAccounts fails (non-retryable)
+      // Primary getTokenLargestAccounts fails (non-retryable, non-"Too many accounts")
       // Backup succeeds, then resolveOwners (Phase 1) succeeds
       globalThis.fetch = vi
         .fn()
@@ -989,7 +989,7 @@ describe("checkTopHolders", () => {
             JSON.stringify({
               jsonrpc: "2.0",
               id: 1,
-              error: { message: "Too many accounts" },
+              error: { message: "Account index unavailable" },
             }),
             { status: 200, headers: { "Content-Type": "application/json" } },
           ),
