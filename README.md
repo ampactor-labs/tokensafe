@@ -64,13 +64,14 @@ Machine-readable service description for automated agent discovery.
 
 ## Endpoints
 
-| Endpoint                         | Price       | Auth | Rate Limit |
-| -------------------------------- | ----------- | ---- | ---------- |
-| `GET /v1/check?mint=<ADDR>`      | $0.008 USDC | x402 | 60/min/IP  |
-| `GET /v1/check/lite?mint=<ADDR>` | Free        | None | 10/min/IP  |
-| `GET /health`                    | Free        | None | 60/min/IP  |
-| `POST /mcp`                      | Free        | None | 10/min/IP  |
-| `GET /.well-known/x402`          | Free        | None | —          |
+| Endpoint                                 | Price       | Auth | Rate Limit |
+| ---------------------------------------- | ----------- | ---- | ---------- |
+| `GET /v1/check?mint=<ADDR>`              | $0.008 USDC | x402 | 60/min/IP  |
+| `GET /v1/check/lite?mint=<ADDR>`         | Free        | None | 10/min/IP  |
+| `GET /v1/decide?mint=<ADDR>&threshold=N` | Free        | None | 10/min/IP  |
+| `GET /health`                            | Free        | None | 60/min/IP  |
+| `POST /mcp`                              | Free        | None | 10/min/IP  |
+| `GET /.well-known/x402`                  | Free        | None | —          |
 
 ## Response (Full Check)
 
@@ -120,6 +121,11 @@ Delta detection is automatic — `changes` and `alerts` populate when a token's 
   "risk_score": 5,
   "risk_level": "LOW",
   "summary": "Low risk. ...",
+  "authorities_renounced": true,
+  "trusted_authority": false,
+  "has_liquidity": true,
+  "can_sell": true,
+  "data_confidence": "complete",
   "is_token_2022": false,
   "has_risky_extensions": false,
   "full_report": {
@@ -160,7 +166,7 @@ Requires: Node 22+, a Solana wallet, and a free [Helius](https://helius.dev) API
 
 TypeScript + Express. Every check reads raw Solana blockchain state via Helius RPC. No GoPlus, no RugCheck, no off-chain databases, no ML models.
 
-- 5-6 RPC calls + 1 Jupiter HTTP call per check
+- 6-9 RPC calls + 1-2 HTTP calls per check
 - 5-minute in-memory LRU cache (10K entries)
 - Ed25519 response signing for audit trail
 - Docker-ready (node:22-slim, non-root user)
