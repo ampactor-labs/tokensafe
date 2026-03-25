@@ -196,6 +196,7 @@ Rate-limited to 30 requests/minute per IP. Returns a risk preview with an upgrad
 | `has_risky_extensions`  | boolean         | Whether risky Token-2022 extensions detected                                        |
 | `can_sell`              | boolean \| null | Whether token can be sold (from honeypot check, null if unavailable)                |
 | `authorities_renounced` | boolean         | True if both mint and freeze authorities are renounced                              |
+| `trusted_authority`     | boolean         | True when an active authority belongs to a known issuer (Circle, Tether, Paxos etc) |
 | `has_liquidity`         | boolean         | Whether any liquidity pool was detected                                             |
 | `liquidity_rating`      | string \| null  | DEEP / MODERATE / SHALLOW / NONE (null if unavailable)                              |
 | `top_10_concentration`  | number \| null  | Top 10 holder percentage (null if unavailable)                                      |
@@ -203,6 +204,9 @@ Rate-limited to 30 requests/minute per IP. Returns a risk preview with an upgrad
 | `risk_score_delta`      | number \| null  | Score change vs previous check (positive = riskier, null on first check)            |
 | `previous_risk_score`   | number \| null  | Risk score at previous check (null on first check)                                  |
 | `previous_risk_level`   | string \| null  | Risk level at previous check (null on first check)                                  |
+| `data_confidence`       | string          | `complete` or `partial` — LLM-readable confidence signal                            |
+| `degraded_note`         | string \| null  | Human-readable explanation when partial (null when complete)                        |
+| `uncertainty_penalties` | object \| null  | Map of failed check → penalty points when degraded (null when complete)             |
 | `full_report`           | object          | `{ url, price_usd, payment_protocol, includes }` — structured CTA for full analysis |
 
 ### `GET /v1/decide?mint=<MINT>&threshold=N` — Binary Decision (Free)
@@ -225,6 +229,7 @@ Rate-limited to 30 requests/minute per IP. Returns a SAFE/RISKY/UNKNOWN decision
 | `risk_score`      | number                | 0-100 (0 = safest)                                                                |
 | `risk_level`      | string                | LOW / MODERATE / HIGH / CRITICAL / EXTREME                                        |
 | `threshold_used`  | number                | The threshold applied (clamped to 0-100)                                          |
+| `score_reliable`  | boolean               | False when data is degraded — signals agents not to trust `risk_score` directly   |
 | `note`            | string \| undefined   | Present when `decision` is UNKNOWN — explains degradation and suggests retry      |
 | `degraded_checks` | string[] \| undefined | Present when `decision` is UNKNOWN — names of checks that failed                  |
 | `full_report`     | object                | Structured CTA for full paid analysis                                             |
