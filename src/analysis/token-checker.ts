@@ -119,6 +119,7 @@ export interface TokenCheckLiteResult {
   has_risky_extensions: boolean;
   can_sell: boolean | null;
   authorities_renounced: boolean;
+  trusted_authority: boolean;
   has_liquidity: boolean;
   liquidity_rating: string | null;
   top_10_concentration: number | null;
@@ -232,6 +233,15 @@ export async function checkTokenLite(
       authorities_renounced:
         result.checks.mint_authority.status === "RENOUNCED" &&
         result.checks.freeze_authority.status === "RENOUNCED",
+      trusted_authority:
+        (result.checks.mint_authority.status === "ACTIVE" &&
+          isTrustedMintAuthority(
+            result.checks.mint_authority.authority ?? "",
+          )) ||
+        (result.checks.freeze_authority.status === "ACTIVE" &&
+          isTrustedFreezeAuthority(
+            result.checks.freeze_authority.authority ?? "",
+          )),
       has_liquidity: result.checks.liquidity?.has_liquidity ?? false,
       liquidity_rating: result.checks.liquidity?.liquidity_rating ?? null,
       top_10_concentration:
@@ -269,10 +279,14 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
   const rpcStart = Date.now();
   try {
     mintData = await checkMintAccount(mintAddress);
-    rpcLatency.labels("checkMintAccount").observe((Date.now() - rpcStart) / 1000);
+    rpcLatency
+      .labels("checkMintAccount")
+      .observe((Date.now() - rpcStart) / 1000);
     reportRpcSuccess();
   } catch (err) {
-    rpcLatency.labels("checkMintAccount").observe((Date.now() - rpcStart) / 1000);
+    rpcLatency
+      .labels("checkMintAccount")
+      .observe((Date.now() - rpcStart) / 1000);
     reportRpcFailure();
     if (err instanceof ApiError) throw err;
     throw new ApiError(
@@ -382,7 +396,10 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
   if (liquidity === null) degradedChecks.push("liquidity");
   if (metadata === null && !tokenMetadataExt) degradedChecks.push("metadata");
   if (honeypot === null) degradedChecks.push("honeypot");
-  if (tokenAge === null || (tokenAge.token_age_hours === null && !tokenAge.established))
+  if (
+    tokenAge === null ||
+    (tokenAge.token_age_hours === null && !tokenAge.established)
+  )
     degradedChecks.push("token_age");
   const degraded = degradedChecks.length > 0;
 
@@ -406,7 +423,9 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
 
   const checked_at = new Date().toISOString();
 
-  const dataConfidence: "complete" | "partial" = degraded ? "partial" : "complete";
+  const dataConfidence: "complete" | "partial" = degraded
+    ? "partial"
+    : "complete";
   const degradedNote = degraded
     ? `Warning: ${degradedChecks.length} of 6 checks failed (${degradedChecks.join(", ")}). Score includes uncertainty penalties and may not reflect true risk. Retry or use full /v1/check for best accuracy.`
     : null;
@@ -423,12 +442,20 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
       mint_authority: {
         status: mintData.mintAuthority === null ? "RENOUNCED" : "ACTIVE",
         authority: mintData.mintAuthority,
-        risk: mintData.mintAuthority === null || isTrustedMintAuthority(mintData.mintAuthority) ? "SAFE" : "DANGEROUS",
+        risk:
+          mintData.mintAuthority === null ||
+          isTrustedMintAuthority(mintData.mintAuthority)
+            ? "SAFE"
+            : "DANGEROUS",
       },
       freeze_authority: {
         status: mintData.freezeAuthority === null ? "RENOUNCED" : "ACTIVE",
         authority: mintData.freezeAuthority,
-        risk: mintData.freezeAuthority === null || isTrustedFreezeAuthority(mintData.freezeAuthority) ? "SAFE" : "DANGEROUS",
+        risk:
+          mintData.freezeAuthority === null ||
+          isTrustedFreezeAuthority(mintData.freezeAuthority)
+            ? "SAFE"
+            : "DANGEROUS",
       },
       supply: {
         total: mintData.supplyRaw.toString(),

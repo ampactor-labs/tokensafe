@@ -89,6 +89,7 @@ freeCheckRouter.get("/v1/decide", liteRateLimiter, async (req, res, next) => {
       risk_score: result.risk_score,
       risk_level: result.risk_level,
       threshold_used: threshold,
+      score_reliable: !result.degraded,
       ...(decision === "UNKNOWN" && {
         note: "Some safety checks failed. Risk score includes uncertainty penalties. Retry in 30s or use /v1/check for full details.",
         degraded_checks: result.degraded_checks,
