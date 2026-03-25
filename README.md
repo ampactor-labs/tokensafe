@@ -12,7 +12,7 @@ Solana token safety scanner. Deterministic on-chain analysis behind x402 micropa
 | Freeze authority | Token seizure risk                       | RPC `getAccountInfo`           |
 | Top holders      | Concentration / rug risk                 | RPC `getTokenLargestAccounts`  |
 | Liquidity        | Sellability, price impact                | Jupiter quote API              |
-| LP locks         | Liquidity removal risk                   | RPC + 11 known locker programs |
+| LP locks         | Liquidity removal risk                   | RPC + 9 known locker programs  |
 | Honeypot         | Can't-sell detection                     | Jupiter buy/sell comparison    |
 | Metadata         | Name/image bait-and-switch               | RPC Metaplex PDA               |
 | Token age        | Fresh launch signal                      | RPC `getSignaturesForAddress`  |
@@ -28,7 +28,7 @@ Risk score 0-100 where every point is traceable to on-chain state. No third-part
 curl https://tokensafe-production.up.railway.app/v1/check/lite?mint=So11111111111111111111111111111111111111112
 ```
 
-Returns risk score, risk level, and summary. Rate-limited to 10/min per IP.
+Returns risk score, risk level, and summary. Rate-limited to 30/min per IP.
 
 ### Full paid check (x402)
 
@@ -67,10 +67,10 @@ Machine-readable service description for automated agent discovery.
 | Endpoint                                 | Price       | Auth | Rate Limit |
 | ---------------------------------------- | ----------- | ---- | ---------- |
 | `GET /v1/check?mint=<ADDR>`              | $0.008 USDC | x402 | 60/min/IP  |
-| `GET /v1/check/lite?mint=<ADDR>`         | Free        | None | 10/min/IP  |
-| `GET /v1/decide?mint=<ADDR>&threshold=N` | Free        | None | 10/min/IP  |
+| `GET /v1/check/lite?mint=<ADDR>`         | Free        | None | 30/min/IP  |
+| `GET /v1/decide?mint=<ADDR>&threshold=N` | Free        | None | 30/min/IP  |
 | `GET /health`                            | Free        | None | 60/min/IP  |
-| `POST /mcp`                              | Free        | None | 10/min/IP  |
+| `POST /mcp`                              | Free        | None | 30/min/IP  |
 | `GET /.well-known/x402`                  | Free        | None | —          |
 
 ## Response (Full Check)
@@ -87,7 +87,7 @@ Machine-readable service description for automated agent discovery.
     "mint_authority": {
       "status": "ACTIVE",
       "authority": "...",
-      "risk": "INFO"
+      "risk": "SAFE"
     },
     "freeze_authority": {
       "status": "RENOUNCED",

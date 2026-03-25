@@ -171,7 +171,7 @@ Returns comprehensive risk assessment for a single Solana token. Requires x402 p
 | ---------- | -------------- | ---------------------------------------- |
 | `mint`     | string         | Token mint address                       |
 | `symbol`   | string \| null | Token symbol                             |
-| `severity` | string         | HIGH or MEDIUM                           |
+| `severity` | string         | CRITICAL, HIGH, WARNING, or INFO         |
 | `message`  | string         | Human-readable description of the change |
 
 ### `GET /v1/check/lite?mint=<MINT>` — Quick Screening (Free)
@@ -459,9 +459,9 @@ The `degraded_checks` array tells you which checks failed.
 
 **What it means for risk_score:** Uncertainty penalties are added for each missing check:
 
-- `top_holders`: +10, `liquidity`: +10, `honeypot`: +10, `token_age`: +5, `metadata`: +3
-- **Maximum total uncertainty: 38 points** (all checks fail → score starts at 38, risk_level MODERATE)
-- A fully-degraded result can never reach CRITICAL or EXTREME from uncertainty alone
+- `top_holders`: +20, `liquidity`: +10, `honeypot`: +10, `token_age`: +5, `metadata`: +3
+- **Maximum total uncertainty: 48 points** (all checks fail → score starts at 48, risk_level HIGH)
+- A fully-degraded result can reach HIGH from uncertainty alone but not CRITICAL or EXTREME
 
 The score is conservative by design — it overestimates risk when data is missing.
 A token scoring 25 (MODERATE) when degraded might score 15 (LOW) when fully resolved.

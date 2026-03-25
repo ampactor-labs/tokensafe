@@ -14,3 +14,10 @@ data/
 .claude/
 .env.*
 !.env.example
+
+# Internal operational scripts (contain prod URLs, admin tokens, internal test infra)
+scripts/mainnet-audit.sh
+scripts/mainnet-audit-paid.ts
+scripts/e2e-mainnet.ts
+scripts/accuracy-audit.ts
+scripts/test-paid-endpoints.ts
