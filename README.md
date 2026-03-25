@@ -6,17 +6,17 @@ Solana token safety scanner. Deterministic on-chain analysis behind x402 micropa
 
 ## What It Checks
 
-| Check | What It Detects | Source |
-|-------|----------------|--------|
-| Mint authority | Supply inflation risk | RPC `getAccountInfo` |
-| Freeze authority | Token seizure risk | RPC `getAccountInfo` |
-| Top holders | Concentration / rug risk | RPC `getTokenLargestAccounts` |
-| Liquidity | Sellability, price impact | Jupiter quote API |
-| LP locks | Liquidity removal risk | RPC + 11 known locker programs |
-| Honeypot | Can't-sell detection | Jupiter buy/sell comparison |
-| Metadata | Name/image bait-and-switch | RPC Metaplex PDA |
-| Token age | Fresh launch signal | RPC `getSignaturesForAddress` |
-| Token-2022 | Transfer fees, permanent delegate, hooks | TLV extension parsing |
+| Check            | What It Detects                          | Source                         |
+| ---------------- | ---------------------------------------- | ------------------------------ |
+| Mint authority   | Supply inflation risk                    | RPC `getAccountInfo`           |
+| Freeze authority | Token seizure risk                       | RPC `getAccountInfo`           |
+| Top holders      | Concentration / rug risk                 | RPC `getTokenLargestAccounts`  |
+| Liquidity        | Sellability, price impact                | Jupiter quote API              |
+| LP locks         | Liquidity removal risk                   | RPC + 11 known locker programs |
+| Honeypot         | Can't-sell detection                     | Jupiter buy/sell comparison    |
+| Metadata         | Name/image bait-and-switch               | RPC Metaplex PDA               |
+| Token age        | Fresh launch signal                      | RPC `getSignaturesForAddress`  |
+| Token-2022       | Transfer fees, permanent delegate, hooks | TLV extension parsing          |
 
 Risk score 0-100 where every point is traceable to on-chain state. No third-party security APIs.
 
@@ -64,13 +64,13 @@ Machine-readable service description for automated agent discovery.
 
 ## Endpoints
 
-| Endpoint | Price | Auth | Rate Limit |
-|----------|-------|------|------------|
-| `GET /v1/check?mint=<ADDR>` | $0.008 USDC | x402 | 60/min/IP |
-| `GET /v1/check/lite?mint=<ADDR>` | Free | None | 10/min/IP |
-| `GET /health` | Free | None | 60/min/IP |
-| `POST /mcp` | Free | None | 10/min/IP |
-| `GET /.well-known/x402` | Free | None | — |
+| Endpoint                         | Price       | Auth | Rate Limit |
+| -------------------------------- | ----------- | ---- | ---------- |
+| `GET /v1/check?mint=<ADDR>`      | $0.008 USDC | x402 | 60/min/IP  |
+| `GET /v1/check/lite?mint=<ADDR>` | Free        | None | 10/min/IP  |
+| `GET /health`                    | Free        | None | 60/min/IP  |
+| `POST /mcp`                      | Free        | None | 10/min/IP  |
+| `GET /.well-known/x402`          | Free        | None | —          |
 
 ## Response (Full Check)
 
@@ -83,10 +83,22 @@ Machine-readable service description for automated agent discovery.
   "risk_level": "LOW",
   "summary": "Low risk. Mint/freeze authorities active but deeply liquid with distributed holders.",
   "checks": {
-    "mint_authority": { "status": "ACTIVE", "authority": "...", "risk": "INFO" },
-    "freeze_authority": { "status": "RENOUNCED", "authority": null, "risk": "SAFE" },
+    "mint_authority": {
+      "status": "ACTIVE",
+      "authority": "...",
+      "risk": "INFO"
+    },
+    "freeze_authority": {
+      "status": "RENOUNCED",
+      "authority": null,
+      "risk": "SAFE"
+    },
     "top_holders": { "top_10_percentage": 12.5, "risk": "SAFE" },
-    "liquidity": { "liquidity_rating": "DEEP", "lp_locked": true, "risk": "SAFE" },
+    "liquidity": {
+      "liquidity_rating": "DEEP",
+      "lp_locked": true,
+      "risk": "SAFE"
+    },
     "honeypot": { "can_sell": true, "risk": "SAFE" },
     "metadata": { "mutable": false, "risk": "SAFE" },
     "token_age_hours": 8760
