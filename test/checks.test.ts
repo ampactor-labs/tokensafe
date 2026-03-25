@@ -1042,6 +1042,30 @@ describe("checkTopHolders", () => {
       expect(result.status).toBe("UNAVAILABLE");
       expect(result.risk).toBe("UNKNOWN");
     });
+
+    it("returns WIDELY_HELD when RPC reports too many accounts", async () => {
+      (config as { backupRpcUrl: string }).backupRpcUrl = "";
+      // Primary fails with "Too many accounts" (non-retryable)
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            error: {
+              message:
+                "Too many accounts requested (5000000 pubkeys), try adding filters to narrow down results",
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+      const result = await checkTopHolders(MINT, 1000n);
+      expect(result.status).toBe("WIDELY_HELD");
+      expect(result.risk).toBe("SAFE");
+      expect(result.holder_count_estimate).toBe(5000000);
+      expect(result.note).toContain("5,000,000");
+    });
   });
 });
 

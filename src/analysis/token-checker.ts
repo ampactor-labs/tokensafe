@@ -393,6 +393,7 @@ async function runAnalysis(mintAddress: string): Promise<TokenCheckResult> {
   // Built BEFORE scoring so uncertainty penalties apply.
   const degradedChecks: string[] = [];
   if (holders.status === "UNAVAILABLE") degradedChecks.push("top_holders");
+  // WIDELY_HELD is not degraded — the high holder count IS the data
   if (liquidity === null) degradedChecks.push("liquidity");
   if (metadata === null && !tokenMetadataExt) degradedChecks.push("metadata");
   if (honeypot === null) degradedChecks.push("honeypot");
