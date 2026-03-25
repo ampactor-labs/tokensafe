@@ -54,6 +54,10 @@ async function getTokenLargestAccountsDirect(
       "getTokenLargestAccounts",
     );
   } catch (primaryErr) {
+    // "Too many accounts" is a validator-level limit — no backup will help.
+    // Let it propagate so checkTopHolders can detect WIDELY_HELD.
+    const pmsg = primaryErr instanceof Error ? primaryErr.message : "";
+    if (pmsg.includes("Too many accounts")) throw primaryErr;
     if (!config.backupRpcUrl) throw primaryErr;
     logger.warn(
       { mintAddress },
