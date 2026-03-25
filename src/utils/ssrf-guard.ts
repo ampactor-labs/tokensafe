@@ -18,11 +18,13 @@ const PRIVATE_RANGES_V4 = [
 function ipv4ToInt(ip: string): number {
   const parts = ip.split(".");
   if (parts.length !== 4) return -1;
-  return parts.reduce((acc, octet) => {
-    const n = parseInt(octet, 10);
-    if (n < 0 || n > 255 || isNaN(n)) return -1;
-    return (acc << 8) | n;
-  }, 0) >>> 0;
+  return (
+    parts.reduce((acc, octet) => {
+      const n = parseInt(octet, 10);
+      if (n < 0 || n > 255 || isNaN(n)) return -1;
+      return (acc << 8) | n;
+    }, 0) >>> 0
+  );
 }
 
 export function isPrivateIp(ip: string): boolean {
@@ -74,12 +76,16 @@ export async function resolveAndCheckIps(hostname: string): Promise<void> {
   }
 
   if (ips.length === 0) {
-    throw new Error(`DNS resolution failed for ${hostname} — no A or AAAA records`);
+    throw new Error(
+      `DNS resolution failed for ${hostname} — no A or AAAA records`,
+    );
   }
 
   for (const ip of ips) {
     if (isPrivateIp(ip)) {
-      throw new Error(`Resolved IP ${ip} for ${hostname} is in a private/reserved range`);
+      throw new Error(
+        `Resolved IP ${ip} for ${hostname} is in a private/reserved range`,
+      );
     }
   }
 }

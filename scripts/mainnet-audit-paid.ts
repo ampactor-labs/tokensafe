@@ -11,7 +11,8 @@ import { toClientSvmSigner } from "@x402/svm";
 import { createKeyPairSignerFromBytes } from "@solana/kit";
 import { base58 } from "@scure/base";
 
-const BASE = process.env.SMOKE_URL ?? "https://tokensafe-production.up.railway.app";
+const BASE =
+  process.env.SMOKE_URL ?? "https://tokensafe-production.up.railway.app";
 const WSOL = "So11111111111111111111111111111111111111112";
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const USDT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
@@ -57,7 +58,7 @@ console.log(`========================================\n`);
 await check("GET /v1/check wSOL ($0.008)", async () => {
   const res = await paidFetch(`${BASE}/v1/check?mint=${WSOL}`);
   assert(res.status === 200, `expected 200, got ${res.status}`);
-  const body = await res.json() as any;
+  const body = (await res.json()) as any;
   assert(body.mint === WSOL, `wrong mint`);
   assert(typeof body.risk_score === "number", "missing risk_score");
   assert(typeof body.checks === "object", "missing checks");
@@ -65,7 +66,9 @@ await check("GET /v1/check wSOL ($0.008)", async () => {
   assert(typeof body.score_breakdown === "object", "missing score_breakdown");
   const receipt = res.headers.get("payment-response");
   assert(receipt !== null, "missing payment-response header");
-  console.log(`     risk=${body.risk_score} (${body.risk_level}) name=${body.name}`);
+  console.log(
+    `     risk=${body.risk_score} (${body.risk_level}) name=${body.name}`,
+  );
   console.log(`     receipt: ${receipt!.slice(0, 60)}...`);
 });
 
@@ -73,9 +76,11 @@ await check("GET /v1/check wSOL ($0.008)", async () => {
 await check("GET /v1/check USDC ($0.008)", async () => {
   const res = await paidFetch(`${BASE}/v1/check?mint=${USDC}`);
   assert(res.status === 200, `expected 200, got ${res.status}`);
-  const body = await res.json() as any;
+  const body = (await res.json()) as any;
   assert(body.risk_score <= 20, `USDC risk too high: ${body.risk_score}`);
-  console.log(`     risk=${body.risk_score} (${body.risk_level}) name=${body.name}`);
+  console.log(
+    `     risk=${body.risk_score} (${body.risk_level}) name=${body.name}`,
+  );
 });
 
 // 3. Batch small — 3 tokens ($0.025)
@@ -86,12 +91,16 @@ await check("POST /v1/check/batch/small — 3 tokens ($0.025)", async () => {
     body: JSON.stringify({ mints: [WSOL, USDC, USDT] }),
   });
   assert(res.status === 200, `expected 200, got ${res.status}`);
-  const body = await res.json() as any;
+  const body = (await res.json()) as any;
   assert(body.total === 3, `expected total=3, got ${body.total}`);
   assert(body.succeeded >= 1, `expected succeeded>=1, got ${body.succeeded}`);
-  console.log(`     total=${body.total} succeeded=${body.succeeded} failed=${body.failed}`);
+  console.log(
+    `     total=${body.total} succeeded=${body.succeeded} failed=${body.failed}`,
+  );
   for (const r of body.results) {
-    console.log(`     ${r.mint.slice(0, 8)}... risk=${r.risk_score ?? "ERR"} (${r.risk_level ?? r.error?.code})`);
+    console.log(
+      `     ${r.mint.slice(0, 8)}... risk=${r.risk_score ?? "ERR"} (${r.risk_level ?? r.error?.code})`,
+    );
   }
 });
 
@@ -105,11 +114,15 @@ await check("POST /v1/check/batch/medium — 5 tokens ($0.08)", async () => {
     body: JSON.stringify({ mints: [WSOL, USDC, USDT, BONK, JUP] }),
   });
   assert(res.status === 200, `expected 200, got ${res.status}`);
-  const body = await res.json() as any;
+  const body = (await res.json()) as any;
   assert(body.total === 5, `expected total=5, got ${body.total}`);
-  console.log(`     total=${body.total} succeeded=${body.succeeded} failed=${body.failed}`);
+  console.log(
+    `     total=${body.total} succeeded=${body.succeeded} failed=${body.failed}`,
+  );
   for (const r of body.results) {
-    console.log(`     ${r.symbol ?? r.mint.slice(0, 8)} risk=${r.risk_score ?? "ERR"} (${r.risk_level ?? r.error?.code})`);
+    console.log(
+      `     ${r.symbol ?? r.mint.slice(0, 8)} risk=${r.risk_score ?? "ERR"} (${r.risk_level ?? r.error?.code})`,
+    );
   }
 });
 
@@ -121,20 +134,33 @@ await check("POST /v1/audit/small — 3 tokens ($0.08)", async () => {
     body: JSON.stringify({ mints: [WSOL, USDC, USDT] }),
   });
   assert(res.status === 200, `expected 200, got ${res.status}`);
-  const body = await res.json() as any;
+  const body = (await res.json()) as any;
   assert(typeof body.audit_id === "string", "missing audit_id");
-  assert(typeof body.attestation?.hash === "string", "missing attestation.hash");
-  assert(typeof body.attestation?.signature === "string", "missing attestation.signature");
+  assert(
+    typeof body.attestation?.hash === "string",
+    "missing attestation.hash",
+  );
+  assert(
+    typeof body.attestation?.signature === "string",
+    "missing attestation.signature",
+  );
   assert(Array.isArray(body.results), "missing results array");
   console.log(`     audit_id=${body.audit_id}`);
-  console.log(`     violations=${body.policy_violations?.length ?? 0} aggregate_risk=${body.aggregate_risk_score}`);
+  console.log(
+    `     violations=${body.policy_violations?.length ?? 0} aggregate_risk=${body.aggregate_risk_score}`,
+  );
   console.log(`     attestation: ${body.attestation.hash.slice(0, 40)}...`);
 
   // 5b. Verify audit report is accessible
   const reportRes = await fetch(`${BASE}/v1/audit/${body.audit_id}/report`, {
-    headers: { "Authorization": `Bearer ${process.env.WEBHOOK_ADMIN_BEARER ?? ""}` },
+    headers: {
+      Authorization: `Bearer ${process.env.WEBHOOK_ADMIN_BEARER ?? ""}`,
+    },
   });
-  assert(reportRes.status === 200, `report expected 200, got ${reportRes.status}`);
+  assert(
+    reportRes.status === 200,
+    `report expected 200, got ${reportRes.status}`,
+  );
   const report = await reportRes.text();
   assert(report.includes("TokenSafe"), "report missing TokenSafe header");
   console.log(`     report: ${report.length} chars markdown`);
@@ -150,9 +176,11 @@ await check("POST /v1/check/batch/large — 5 tokens ($0.15)", async () => {
     body: JSON.stringify({ mints: [WSOL, USDC, USDT, BONK, JUP] }),
   });
   assert(res.status === 200, `expected 200, got ${res.status}`);
-  const body = await res.json() as any;
+  const body = (await res.json()) as any;
   assert(body.total === 5, `expected total=5, got ${body.total}`);
-  console.log(`     total=${body.total} succeeded=${body.succeeded} failed=${body.failed}`);
+  console.log(
+    `     total=${body.total} succeeded=${body.succeeded} failed=${body.failed}`,
+  );
 });
 
 // 7. Audit standard — 5 tokens ($0.30)
@@ -165,14 +193,21 @@ await check("POST /v1/audit/standard — 5 tokens ($0.30)", async () => {
     body: JSON.stringify({ mints: [WSOL, USDC, USDT, BONK, JUP] }),
   });
   assert(res.status === 200, `expected 200, got ${res.status}`);
-  const body = await res.json() as any;
+  const body = (await res.json()) as any;
   assert(typeof body.audit_id === "string", "missing audit_id");
-  assert(typeof body.attestation?.hash === "string", "missing attestation.hash");
-  console.log(`     audit_id=${body.audit_id} violations=${body.policy_violations?.length ?? 0} aggregate_risk=${body.aggregate_risk_score}`);
+  assert(
+    typeof body.attestation?.hash === "string",
+    "missing attestation.hash",
+  );
+  console.log(
+    `     audit_id=${body.audit_id} violations=${body.policy_violations?.length ?? 0} aggregate_risk=${body.aggregate_risk_score}`,
+  );
 });
 
 console.log(`\n=== SUMMARY ===`);
 console.log(`   ${passed} passed, ${failed} failed (${passed + failed} total)`);
-console.log(`   Approximate spend: $0.008 + $0.008 + $0.025 + $0.08 + $0.08 + $0.15 + $0.30 = ~$0.65 USDC`);
+console.log(
+  `   Approximate spend: $0.008 + $0.008 + $0.025 + $0.08 + $0.08 + $0.15 + $0.30 = ~$0.65 USDC`,
+);
 console.log();
 process.exit(failed > 0 ? 1 : 0);

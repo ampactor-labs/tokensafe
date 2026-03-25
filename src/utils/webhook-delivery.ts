@@ -29,10 +29,14 @@ export async function deliverWebhook(
     const ips: string[] = [];
     try {
       ips.push(...(await dns.resolve4(url.hostname)));
-    } catch { /* no A records */ }
+    } catch {
+      /* no A records */
+    }
     try {
       ips.push(...(await dns.resolve6(url.hostname)));
-    } catch { /* no AAAA records */ }
+    } catch {
+      /* no AAAA records */
+    }
     for (const ip of ips) {
       if (isPrivateIp(ip)) {
         logger.warn(
@@ -45,7 +49,10 @@ export async function deliverWebhook(
     }
   } catch (err) {
     logger.warn(
-      { deliveryId: delivery.id, error: err instanceof Error ? err.message : String(err) },
+      {
+        deliveryId: delivery.id,
+        error: err instanceof Error ? err.message : String(err),
+      },
       "Webhook delivery DNS check failed",
     );
     markFailed(delivery.id, null);

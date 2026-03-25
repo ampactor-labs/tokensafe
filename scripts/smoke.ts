@@ -369,7 +369,10 @@ async function main() {
   await check("Second lite call returns X-Cache: HIT", async () => {
     const res = await fetch(`${BASE}/v1/check/lite?mint=${WSOL}`);
     const cache = res.headers.get("x-cache");
-    assert(cache !== null && cache.includes("HIT"), `expected X-Cache containing HIT, got ${cache}`);
+    assert(
+      cache !== null && cache.includes("HIT"),
+      `expected X-Cache containing HIT, got ${cache}`,
+    );
   });
 
   // Call 3-4: error paths (fast, no RPC)
