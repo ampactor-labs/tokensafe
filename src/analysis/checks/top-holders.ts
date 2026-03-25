@@ -13,7 +13,7 @@ export interface HolderDetail {
 }
 
 export interface TopHoldersResult {
-  status: "OK" | "UNAVAILABLE";
+  status: "OK" | "UNAVAILABLE" | "WIDELY_HELD";
   top_10_percentage: number;
   top_1_percentage: number;
   holder_count_estimate: number | null;
@@ -201,10 +201,31 @@ export async function checkTopHolders(
   try {
     accounts = await getTokenLargestAccountsDirect(mintAddress);
   } catch (err) {
-    logger.warn(
-      { err: err instanceof Error ? err.message : String(err), mintAddress },
-      "getTokenLargestAccounts failed",
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn({ err: msg, mintAddress }, "getTokenLargestAccounts failed");
+
+    // "Too many accounts requested (5000000 pubkeys)" — the token has millions
+    // of holders. That's not missing data, it's distribution data.
+    const tooManyMatch = msg.match(
+      /Too many accounts requested \((\d+) pubkeys\)/i,
     );
+    if (tooManyMatch) {
+      const holderCount = parseInt(tooManyMatch[1], 10);
+      logger.info(
+        { mintAddress, holderCount },
+        "Token has too many holders for RPC scan — classified as WIDELY_HELD",
+      );
+      return {
+        status: "WIDELY_HELD",
+        top_10_percentage: 0,
+        top_1_percentage: 0,
+        holder_count_estimate: holderCount,
+        top_holders_detail: null,
+        note: `Token has ${holderCount.toLocaleString()}+ holder accounts — too many for RPC scan, but high holder count indicates broad distribution`,
+        risk: "SAFE",
+      };
+    }
+
     return unavailableHolders(
       "Top holder data unavailable (RPC error) — concentration unknown",
     );
