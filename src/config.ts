@@ -18,7 +18,10 @@ export const config = {
   treasuryWallet: required("TREASURY_WALLET_ADDRESS"),
   heliusApiKey: required("HELIUS_API_KEY"),
   facilitatorUrl:
-    process.env.FACILITATOR_URL || "https://facilitator.payai.network",
+    process.env.FACILITATOR_URL ||
+    "https://api.cdp.coinbase.com/platform/v2/x402",
+  cdpApiKeyId: process.env.CDP_API_KEY_ID || "",
+  cdpApiKeySecret: process.env.CDP_API_KEY_SECRET || "",
   solanaNetwork,
   heliusRpcUrl:
     solanaNetwork === "mainnet"

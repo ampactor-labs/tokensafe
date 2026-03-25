@@ -1,10 +1,64 @@
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { registerExactSvmScheme } from "@x402/svm/exact/server";
+import { SignJWT, importPKCS8 } from "jose";
+import crypto from "node:crypto";
 import { config } from "../config.js";
+
+/**
+ * Build CDP JWT auth headers if CDP API keys are configured.
+ * The CDP facilitator requires ES256 JWTs in the Authorization header.
+ */
+function buildCdpAuthHeaders() {
+  if (!config.cdpApiKeyId || !config.cdpApiKeySecret) return undefined;
+
+  // The CDP key secret is a base64-encoded 64-byte Ed25519 seed — but the
+  // CDP platform actually uses ES256 (P-256 ECDSA). The private key from
+  // the portal is an EC key encoded as base64.
+  return async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const nonce = crypto.randomBytes(16).toString("hex");
+
+    // Import the EC private key from base64 PEM-like format
+    const pemKey = `-----BEGIN EC PRIVATE KEY-----\n${config.cdpApiKeySecret}\n-----END EC PRIVATE KEY-----`;
+    const privateKey = await importPKCS8(pemKey, "ES256");
+
+    const makeJwt = async (uri: string) =>
+      await new SignJWT({
+        sub: config.cdpApiKeyId,
+        iss: "cdp",
+        aud: ["cdp_service"],
+        nbf: now,
+        exp: now + 120,
+        uris: [uri],
+        nonce,
+      })
+        .setProtectedHeader({
+          alg: "ES256",
+          kid: config.cdpApiKeyId,
+          typ: "JWT",
+          nonce,
+        })
+        .sign(privateKey);
+
+    const baseUrl = config.facilitatorUrl;
+    const [verifyJwt, settleJwt, supportedJwt] = await Promise.all([
+      makeJwt(`${baseUrl}/verify`),
+      makeJwt(`${baseUrl}/settle`),
+      makeJwt(`${baseUrl}/supported`),
+    ]);
+
+    return {
+      verify: { Authorization: `Bearer ${verifyJwt}` },
+      settle: { Authorization: `Bearer ${settleJwt}` },
+      supported: { Authorization: `Bearer ${supportedJwt}` },
+    };
+  };
+}
 
 const facilitator = new HTTPFacilitatorClient({
   url: config.facilitatorUrl,
+  createAuthHeaders: buildCdpAuthHeaders(),
 });
 
 const resourceServer = new x402ResourceServer(facilitator);
