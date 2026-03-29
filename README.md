@@ -20,7 +20,7 @@ Solana token safety scanner. Deterministic on-chain analysis behind x402 micropa
 | Token age        | Fresh launch signal                      | RPC `getSignaturesForAddress`  |
 | Token-2022       | Transfer fees, permanent delegate, hooks | TLV extension parsing          |
 
-Risk score 0-100 where every point is traceable to on-chain state. No third-party security APIs.
+Rug risk score 0-100 where every point is traceable to on-chain state. No third-party security APIs.
 
 ## Quick Start
 
@@ -30,7 +30,7 @@ Risk score 0-100 where every point is traceable to on-chain state. No third-part
 curl https://tokensafe-production.up.railway.app/v1/check/lite?mint=So11111111111111111111111111111111111111112
 ```
 
-Returns risk score, risk level, and summary. Rate-limited to 30/min per IP.
+Returns rug risk score, risk level, and summary. Rate-limited to 30/min per IP.
 
 ### Full paid check (x402)
 
@@ -54,7 +54,7 @@ Any x402-compatible wallet/client handles the payment flow automatically. $0.008
 claude mcp add tokensafe --transport http https://tokensafe-production.up.railway.app/mcp
 ```
 
-One tool: `solana_token_safety_check` — free risk score, summary, and Token-2022 detection. Full report via x402 REST API.
+One tool: `solana_token_safety_check` — free rug risk score, summary, and Token-2022 detection. Full report via x402 REST API.
 
 ### Discovery
 

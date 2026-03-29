@@ -68,7 +68,7 @@ export function generateMarkdownReport(row: AuditResultRow): string {
   lines.push(`- **Succeeded:** ${succeeded.length}`);
   lines.push(`- **Failed:** ${failed}`);
   lines.push(
-    `- **Aggregate risk score:** ${row.aggregate_risk_score.toFixed(1)}`,
+    `- **Aggregate rug risk score:** ${row.aggregate_risk_score.toFixed(1)}`,
   );
   lines.push(
     `- **Policy violations:** ${violations.length} (${blockCount} block, ${warnCount} warn)`,
@@ -122,7 +122,7 @@ export function generateMarkdownReport(row: AuditResultRow): string {
       .join(" ");
     lines.push(`### ${token.mint}${label ? ` — ${label}` : ""}`);
     lines.push("");
-    lines.push(`- **Risk score:** ${token.risk_score}`);
+    lines.push(`- **Rug risk score:** ${token.risk_score}`);
     lines.push(`- **Risk level:** ${token.risk_level}`);
     if (token.checks) {
       lines.push(

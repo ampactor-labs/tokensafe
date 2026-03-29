@@ -85,7 +85,7 @@ export const x402Middleware = paymentMiddleware(
     "GET /v1/check": {
       accepts: { ...baseAccepts, price: "$0.008" },
       description:
-        "Solana token safety check — mint authority, freeze authority, top holder concentration, liquidity, honeypot detection, metadata mutability, token age, Token-2022 extension risks, risk score",
+        "Solana token safety check — mint authority, freeze authority, top holder concentration, liquidity, honeypot detection, metadata mutability, token age, Token-2022 extension risks, rug risk score",
       extensions: {
         bazaar: {
           info: {
