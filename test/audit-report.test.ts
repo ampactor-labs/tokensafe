@@ -59,7 +59,7 @@ describe("generateMarkdownReport", () => {
     expect(md).toContain("**Tokens analyzed:** 1");
     expect(md).toContain("**Succeeded:** 1");
     expect(md).toContain("**Failed:** 0");
-    expect(md).toContain("**Aggregate risk score:** 15.0");
+    expect(md).toContain("**Aggregate rug risk score:** 15.0");
   });
 
   it("includes risk distribution table", () => {
@@ -132,7 +132,7 @@ describe("generateMarkdownReport", () => {
     expect(md).toContain("## Token Details");
     expect(md).toContain(`### ${WSOL}`);
     expect(md).toContain("Wrapped SOL (SOL)");
-    expect(md).toContain("**Risk score:** 15");
+    expect(md).toContain("**Rug risk score:** 15");
     expect(md).toContain("**Mint authority:** RENOUNCED");
     expect(md).toContain("**Freeze authority:** RENOUNCED");
     expect(md).toContain("**Liquidity:** Yes (DEEP)");
@@ -186,7 +186,7 @@ describe("generateMarkdownReport", () => {
     });
     const md = generateMarkdownReport(row);
     expect(md).toContain(`### ${WSOL}`);
-    expect(md).toContain("**Risk score:** 0");
+    expect(md).toContain("**Rug risk score:** 0");
     expect(md).not.toContain("**Mint authority:**");
   });
 });

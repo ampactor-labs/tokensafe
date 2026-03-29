@@ -243,11 +243,8 @@ export async function checkTokenLite(
             result.checks.freeze_authority.authority ?? "",
           )),
       has_liquidity: result.checks.liquidity?.has_liquidity ?? false,
-      liquidity_rating: result.checks.liquidity?.liquidity_rating ?? null,
-      top_10_concentration:
-        result.checks.top_holders.status === "OK"
-          ? result.checks.top_holders.top_10_percentage
-          : null,
+      liquidity_rating: null,
+      top_10_concentration: null,
       token_age_hours: result.checks.token_age_hours ?? null,
       risk_score_delta: result.changes?.risk_score_delta ?? null,
       previous_risk_score: result.changes?.previous_risk_score ?? null,
