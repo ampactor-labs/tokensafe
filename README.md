@@ -4,7 +4,7 @@ Solana token safety scanner. Deterministic on-chain analysis behind x402 micropa
 
 **$0.008/request in USDC. No API keys. No accounts. No opaque ML. Payment IS authentication.**
 
-**Try it:** [scry.app](https://scry-production.up.railway.app/) (web) · [@ScryTokenBot](https://t.me/ScryTokenBot) (Telegram) · [source](https://github.com/ampactor-labs/scry)
+**Try it:** [scry.app](https://scry-production.up.railway.app/) (web) · [@ScryTokenBot](https://t.me/ScryTokenBot) (Telegram)
 
 ## What It Checks
 
