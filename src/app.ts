@@ -30,6 +30,7 @@ import { adminRouter } from "./routes/admin.js";
 import { freeCheckRouter, paidCheckRouter } from "./routes/check.js";
 import { auditReadRouter, auditWriteRouter } from "./routes/audit.js";
 import { discoveryRouter } from "./discovery/router.js";
+import { verifyRouter } from "./routes/verify.js";
 
 export const app = express();
 app.set("trust proxy", 1);
@@ -200,6 +201,7 @@ app.get("/health", healthRateLimiter, (_req, res) => {
 // These routes use their own auth (bearer, rate-limiter) — before x402 gate
 
 app.use("/", freeCheckRouter); // /v1/check/lite, /v1/decide
+app.use("/", verifyRouter); // /v1/verify (free attestation verification)
 app.use("/", adminRouter); // /v1/webhooks, /v1/api-keys, /metrics
 app.use("/", auditReadRouter); // /v1/audit/history, /v1/audit/:id/report
 
