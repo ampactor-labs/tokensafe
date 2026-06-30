@@ -72,22 +72,32 @@ When a request requires payment, the server returns HTTP 402 with a base64-encod
 
 ```json
 {
-  "scheme": "exact",
-  "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
-  "maxAmountRequired": "20000",
-  "resource": "https://tokensafe-production.up.railway.app/v1/check",
-  "description": "Solana token safety check",
-  "payTo": "<TREASURY_WALLET>",
-  "asset": {
-    "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+  "x402Version": 2,
+  "error": "Payment required",
+  "resource": {
+    "url": "https://tokensafe-production.up.railway.app/v1/check?mint=<MINT>",
+    "description": "Solana token safety check",
+    "mimeType": "application/json"
   },
-  "maxTimeoutSeconds": 300
+  "accepts": [
+    {
+      "scheme": "exact",
+      "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+      "amount": "20000",
+      "asset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "payTo": "<TREASURY_WALLET>",
+      "maxTimeoutSeconds": 300,
+      "extra": { "feePayer": "<facilitator-sponsored fee payer>" }
+    }
+  ]
 }
 ```
 
-- `maxAmountRequired`: `"20000"` = $0.02 USDC (6 decimals)
-- `asset.address`: USDC on Solana mainnet
-- `network`: Solana mainnet in CAIP-2 format
+- `x402Version`: `2` (current x402 wire format)
+- `accepts[0].amount`: `"20000"` = $0.02 USDC (6 decimals)
+- `accepts[0].asset`: USDC mint on Solana mainnet
+- `accepts[0].network`: Solana mainnet in CAIP-2 format
+- Discovery metadata (the `bazaar` extension) rides in a top-level `extensions` field
 
 ## Wallet Setup
 
@@ -419,7 +429,18 @@ All errors return structured JSON: `{ "error": { "code": "...", "message": "..."
 
 ## Verifying Response Signatures
 
-Each `/v1/check` response includes `response_signature` and `signer_pubkey`. To verify:
+Each `/v1/check` response includes `response_signature` and `signer_pubkey`.
+
+**Quickest — `POST /v1/verify` (free):** POST the signed fields back and get `{ valid, signer_pubkey }`. You can POST the whole `/v1/check` response object; extra fields are ignored.
+
+```bash
+curl -s -X POST https://tokensafe-production.up.railway.app/v1/verify \
+  -H 'Content-Type: application/json' \
+  -d '{"mint":"<MINT>","checked_at":"<ISO>","rpc_slot":<N>,"risk_score":<N>,"response_signature":"<hex>"}'
+# → { "valid": true, "signer_pubkey": "<hex>" }
+```
+
+**Fully trustless — verify it yourself** (recommended for compliance logs; doesn't rely on the server checking its own signature):
 
 1. Get the signer's public key from `/health` response (`signer_pubkey` field, hex-encoded ed25519 key)
 2. Reconstruct the signed payload: `JSON.stringify({ mint, checked_at, rpc_slot, risk_score })`
@@ -554,7 +575,24 @@ Retry policy: 3 attempts max with exponential backoff (1min, 5min, then abandone
 
 ## API Key Management
 
-Manage subscription API keys. All endpoints require `Authorization: Bearer <WEBHOOK_ADMIN_BEARER>` (same admin token as webhooks).
+### Self-Serve Subscription (`POST /v1/subscribe` — $49 USDC via x402)
+
+No account, no admin token. Pay once via x402 and receive a 30-day Pro key:
+
+```bash
+# An x402 client (e.g. @x402/fetch) handles the 402 → pay → retry automatically.
+curl -s -X POST https://tokensafe-production.up.railway.app/v1/subscribe
+# → 201 { "api_key": "tks_…", "tier": "pro", "expires_at": "...", "monthly_limit": 6000, ... }
+```
+
+The key is shown once — save it, then send it as `X-API-Key` to skip per-call
+payment (6000 checks/month, 200 req/min, 30 days). Must be paid with x402: a
+request already carrying a valid `X-API-Key` is rejected (402) so an existing
+key can't mint free keys.
+
+### Admin Key Management
+
+The endpoints below require `Authorization: Bearer <WEBHOOK_ADMIN_BEARER>` (same admin token as webhooks).
 
 ### Create API Key
 

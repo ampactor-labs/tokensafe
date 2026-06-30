@@ -1,8 +1,8 @@
 # TokenSafe
 
-Solana token safety scanner. Deterministic on-chain analysis behind x402 micropayments.
+Solana token safety scanner. Deterministic on-chain analysis, cryptographically signed, behind x402 micropayments.
 
-**$0.02/request in USDC. No API keys. No accounts. No opaque ML. Payment IS authentication.**
+**$0.02/request in USDC. No API keys, no accounts, no opaque ML.** Every verdict is read straight from chain state and Ed25519-signed — so anyone can verify TokenSafe said it, at [`/v1/verify`](#verifiable-attestations). Aggregators reselling third-party grades can't do that. Payment is authentication.
 
 **Try it:** [scry.app](https://scry-production.up.railway.app/) (web) · [@ScryTokenBot](https://t.me/ScryTokenBot) (Telegram)
 
@@ -76,14 +76,21 @@ prices the x402 payment gate actually charges.
 | Endpoint                                 | Price       | Auth | Rate Limit |
 | ---------------------------------------- | ----------- | ---- | ---------- |
 | `GET /v1/check?mint=<ADDR>`              | $0.02 USDC  | x402 | 60/min/IP  |
+| `POST /v1/check/batch/{small,medium,large}` | $0.07 / $0.20 / $0.40 | x402 | 60/min/IP |
+| `POST /v1/audit/{small,standard}`        | $0.15 / $0.60 | x402 | 60/min/IP |
+| `POST /v1/subscribe`                     | $49 USDC    | x402 | 60/min/IP  |
 | `GET /v1/check/lite?mint=<ADDR>`         | Free        | None | 30/min/IP  |
 | `GET /v1/decide?mint=<ADDR>&threshold=N` | Free        | None | 30/min/IP  |
+| `POST /v1/verify`                        | Free        | None | 60/min/IP  |
 | `GET /health`                            | Free        | None | 60/min/IP  |
 | `POST /mcp`                              | Free        | None | 30/min/IP  |
 | `GET /.well-known/x402`                  | Free        | None | —          |
 | `GET /openapi.json`                      | Free        | None | —          |
 | `GET /discovery/resources`              | Free        | None | —          |
 | `GET /llms.txt`                          | Free        | None | —          |
+
+`POST /v1/subscribe` pays once via x402 and returns a 30-day Pro API key
+(6000 checks/mo, 200 req/min) — send it as `X-API-Key` to skip per-call payment.
 
 ## Response (Full Check)
 
@@ -161,6 +168,26 @@ Server →  200 + full analysis + PAYMENT-RESPONSE receipt
 
 USDC settles to the operator's Solana wallet via the Coinbase CDP facilitator
 (configurable with `FACILITATOR_URL`).
+
+## Verifiable attestations
+
+Every full check is Ed25519-signed over `{mint, checked_at, rpc_slot, risk_score}`.
+The response carries `response_signature` and `signer_pubkey` (also exposed at
+`/health`). Anyone can confirm the verdict is genuine — no need to trust whoever
+forwarded it:
+
+```bash
+curl -s -X POST https://tokensafe-production.up.railway.app/v1/verify \
+  -H 'Content-Type: application/json' \
+  -d '{"mint":"<MINT>","checked_at":"<ISO>","rpc_slot":<N>,"risk_score":<N>,"response_signature":"<hex>"}'
+# → { "valid": true, "signer_pubkey": "<hex>" }
+```
+
+Because the score is computed from raw chain state (not resold from a
+third-party API), the signature is a real proof of provenance — a treasury or
+compliance agent can store it as auditable proof-of-diligence. Operators should
+set a persistent `RESPONSE_SIGNING_KEY` (`npm run signing-key:generate`) so
+attestations stay verifiable across deploys.
 
 ## Self-Hosting
 

@@ -165,6 +165,23 @@ export const catalog: ResourceEntry[] = [
     exampleQuery: { mint: EXAMPLE_MINT, threshold: "30" },
   },
   {
+    method: "POST",
+    path: "/v1/verify",
+    paid: false,
+    priceUsd: 0,
+    title: "Verify a signed attestation",
+    description:
+      "Free, stateless verification of a /v1/check response's Ed25519 attestation. POST back the signed fields + response_signature; returns {valid, signer_pubkey}. Lets anyone independently confirm TokenSafe asserted a given risk_score for a mint at a given slot, without trusting the caller.",
+    tags: ["free"],
+    exampleBody: {
+      mint: EXAMPLE_MINT,
+      checked_at: "2026-06-30T00:00:00.000Z",
+      rpc_slot: 0,
+      risk_score: 15,
+      response_signature: "<hex>",
+    },
+  },
+  {
     method: "GET",
     path: "/health",
     paid: false,
