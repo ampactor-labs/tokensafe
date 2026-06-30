@@ -338,7 +338,7 @@ export function buildOpenApi(baseUrl: string): Record<string, unknown> {
               example: config.networkCaip2,
             },
             asset: { type: "string", example: config.usdcMint },
-            amount: { type: "string", example: "8000" },
+            amount: { type: "string", example: "20000" },
             payTo: { type: "string" },
             maxTimeoutSeconds: { type: "integer", example: 60 },
             extra: { type: "object" },
