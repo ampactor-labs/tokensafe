@@ -58,11 +58,18 @@ One tool: `solana_token_safety_check` — free rug risk score, summary, and Toke
 
 ### Discovery
 
+Machine-readable service descriptions for automated agent + aggregator discovery:
+
 ```bash
-curl https://tokensafe-production.up.railway.app/.well-known/x402
+curl https://tokensafe-production.up.railway.app/openapi.json          # OpenAPI 3.1 (x-x402 per paid op)
+curl https://tokensafe-production.up.railway.app/.well-known/x402      # x402 manifest (x402scan compat)
+curl https://tokensafe-production.up.railway.app/discovery/resources   # x402 Bazaar resource list
+curl https://tokensafe-production.up.railway.app/llms.txt              # agent guide (markdown)
 ```
 
-Machine-readable service description for automated agent discovery.
+All discovery documents are generated from a single source of truth
+(`src/discovery/catalog.ts`), so advertised prices can never drift from the
+prices the x402 payment gate actually charges.
 
 ## Endpoints
 
@@ -74,6 +81,9 @@ Machine-readable service description for automated agent discovery.
 | `GET /health`                            | Free        | None | 60/min/IP  |
 | `POST /mcp`                              | Free        | None | 30/min/IP  |
 | `GET /.well-known/x402`                  | Free        | None | —          |
+| `GET /openapi.json`                      | Free        | None | —          |
+| `GET /discovery/resources`              | Free        | None | —          |
+| `GET /llms.txt`                          | Free        | None | —          |
 
 ## Response (Full Check)
 
@@ -149,7 +159,8 @@ Agent  →  GET /v1/check?mint=<TOKEN> + PAYMENT-SIGNATURE header
 Server →  200 + full analysis + PAYMENT-RESPONSE receipt
 ```
 
-USDC settles to the operator's Solana wallet in ~400ms via the PayAI facilitator.
+USDC settles to the operator's Solana wallet via the Coinbase CDP facilitator
+(configurable with `FACILITATOR_URL`).
 
 ## Self-Hosting
 

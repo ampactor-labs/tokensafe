@@ -1,0 +1,16 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ampactor-labs/tokensafe",
+  "description": "Solana token safety scanner — rug risk score (0-100) from pure on-chain analysis: mint/freeze authority, holder concentration, liquidity, LP locks, honeypot detection, and Token-2022 extension risks. Free lite check; full report via x402 micropayment.",
+  "repository": {
+    "url": "https://github.com/ampactor-labs/tokensafe",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://tokensafe-production.up.railway.app/mcp"
+    }
+  ]
+}
