@@ -206,11 +206,14 @@ export function buildOpenApi(baseUrl: string): Record<string, unknown> {
     }
 
     if (e.method === "POST") {
+      const takesMints = !!e.exampleBody && "mints" in e.exampleBody;
       op.requestBody = {
-        required: true,
+        required: takesMints,
         content: {
           "application/json": {
-            schema: { $ref: "#/components/schemas/BatchRequest" },
+            schema: takesMints
+              ? { $ref: "#/components/schemas/BatchRequest" }
+              : { type: "object" },
             example: e.exampleBody,
           },
         },
