@@ -18,6 +18,7 @@ import {
   checkUsageLimit,
 } from "../utils/api-keys.js";
 import { registry } from "../utils/metrics.js";
+import { getRevenueSummary } from "../utils/revenue.js";
 import { webhookAuth } from "../utils/auth-middleware.js";
 
 export const adminRouter = Router();
@@ -381,4 +382,9 @@ adminRouter.get("/metrics", (req, res, next) => {
       res.send(data);
     })
     .catch(next);
+});
+
+// Revenue summary (since boot) — settled payments vs. bot probes, Bearer-gated.
+adminRouter.get("/v1/revenue", webhookAuth, (_req, res) => {
+  res.json(getRevenueSummary());
 });
