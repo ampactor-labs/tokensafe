@@ -212,7 +212,7 @@ async function main() {
         "instructions missing TokenSafe",
       );
       assert(
-        body.instructions.includes("$0.008"),
+        body.instructions.includes("$0.02"),
         "instructions missing pricing",
       );
     },

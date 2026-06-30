@@ -132,7 +132,7 @@ function makeLiteResult(
     uncertainty_penalties: null,
     full_report: {
       url: `/v1/check?mint=${WSOL}`,
-      price_usd: "$0.008",
+      price_usd: "$0.02",
       payment_protocol: "x402",
       includes:
         "authority addresses, holder breakdown, LP lock status, honeypot details, delta detection",
@@ -373,7 +373,7 @@ describe("GET /v1/check/lite", () => {
     expect(res.body.risk_level).toBe("LOW");
     expect(res.body.summary).toBeDefined();
     expect(res.body.full_report.url).toContain("/v1/check");
-    expect(res.body.full_report.price_usd).toBe("$0.008");
+    expect(res.body.full_report.price_usd).toBe("$0.02");
     expect(res.body.full_report.payment_protocol).toBe("x402");
   });
 

@@ -1,9 +1,14 @@
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
-import { HTTPFacilitatorClient } from "@x402/core/server";
+import { HTTPFacilitatorClient, type RouteConfig } from "@x402/core/server";
 import { registerExactSvmScheme } from "@x402/svm/exact/server";
 import { SignJWT, importJWK } from "jose";
 import crypto from "node:crypto";
 import { config } from "../config.js";
+import {
+  paidEntries,
+  buildBazaarInfo,
+  usdToPriceString,
+} from "../discovery/catalog.js";
 
 /**
  * Build CDP JWT auth headers if CDP API keys are configured.
@@ -71,7 +76,7 @@ const facilitator = new HTTPFacilitatorClient({
   createAuthHeaders: buildCdpAuthHeaders(),
 });
 
-const resourceServer = new x402ResourceServer(facilitator);
+export const resourceServer = new x402ResourceServer(facilitator);
 registerExactSvmScheme(resourceServer);
 
 const baseAccepts = {
@@ -80,57 +85,17 @@ const baseAccepts = {
   payTo: config.treasuryWallet,
 };
 
-export const x402Middleware = paymentMiddleware(
-  {
-    "GET /v1/check": {
-      accepts: { ...baseAccepts, price: "$0.008" },
-      description:
-        "Solana token safety check — mint authority, freeze authority, top holder concentration, liquidity, honeypot detection, metadata mutability, token age, Token-2022 extension risks, rug risk score",
-      extensions: {
-        bazaar: {
-          info: {
-            input: {
-              type: "http",
-              method: "GET",
-              queryParams: {
-                mint: "So11111111111111111111111111111111111111112",
-              },
-            },
-            output: {
-              type: "json",
-              example: {
-                mint: "So11111111111111111111111111111111111111112",
-                risk_score: 15,
-                risk_level: "LOW",
-                summary: "Low risk. All authorities renounced, deep liquidity.",
-              },
-            },
-          },
-        },
-      },
-    },
-    "POST /v1/check/batch/small": {
-      accepts: { ...baseAccepts, price: "$0.025" },
-      description: "Batch token safety check — up to 5 tokens at $0.005/token",
-    },
-    "POST /v1/check/batch/medium": {
-      accepts: { ...baseAccepts, price: "$0.08" },
-      description: "Batch token safety check — up to 20 tokens at $0.004/token",
-    },
-    "POST /v1/check/batch/large": {
-      accepts: { ...baseAccepts, price: "$0.15" },
-      description: "Batch token safety check — up to 50 tokens at $0.003/token",
-    },
-    "POST /v1/audit/small": {
-      accepts: { ...baseAccepts, price: "$0.08" },
-      description:
-        "Treasury audit — up to 10 tokens with policy evaluation and compliance report",
-    },
-    "POST /v1/audit/standard": {
-      accepts: { ...baseAccepts, price: "$0.30" },
-      description:
-        "Treasury audit — up to 50 tokens with policy evaluation and compliance report",
-    },
-  },
-  resourceServer,
-);
+// Build the route → payment config from the canonical catalog so the price a
+// caller pays can never drift from what /openapi.json + /discovery advertise.
+// Every paid route declares the `bazaar` extension so the CDP facilitator
+// catalogs each endpoint on its first settled payment.
+const routesConfig: Record<string, RouteConfig> = {};
+for (const entry of paidEntries) {
+  routesConfig[`${entry.method} ${entry.path}`] = {
+    accepts: { ...baseAccepts, price: usdToPriceString(entry.priceUsd) },
+    description: entry.description,
+    extensions: { bazaar: buildBazaarInfo(entry) },
+  };
+}
+
+export const x402Middleware = paymentMiddleware(routesConfig, resourceServer);

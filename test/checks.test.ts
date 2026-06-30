@@ -1573,7 +1573,7 @@ describe("checkTokenLite", () => {
     expect(result.is_token_2022).toBe(false);
     expect(result.has_risky_extensions).toBe(false);
     expect(result.full_report.url).toContain("/v1/check?mint=");
-    expect(result.full_report.price_usd).toBe("$0.008");
+    expect(result.full_report.price_usd).toBe("$0.02");
     expect(result.full_report.payment_protocol).toBe("x402");
   });
 
@@ -1674,7 +1674,7 @@ describe("checkTokenLite", () => {
     expect(result.full_report.url).toBe(
       `https://api.example.com/v1/check?mint=${MINT}`,
     );
-    expect(result.full_report.price_usd).toBe("$0.008");
+    expect(result.full_report.price_usd).toBe("$0.02");
     expect(result.full_report.payment_protocol).toBe("x402");
   });
 

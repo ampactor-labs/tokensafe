@@ -2,7 +2,7 @@
 
 Solana token safety scanner. Deterministic on-chain analysis behind x402 micropayments.
 
-**$0.008/request in USDC. No API keys. No accounts. No opaque ML. Payment IS authentication.**
+**$0.02/request in USDC. No API keys. No accounts. No opaque ML. Payment IS authentication.**
 
 **Try it:** [scry.app](https://scry-production.up.railway.app/) (web) · [@ScryTokenBot](https://t.me/ScryTokenBot) (Telegram)
 
@@ -41,7 +41,7 @@ curl -s https://tokensafe-production.up.railway.app/v1/check?mint=So111111111111
 # Use any x402-compatible client to handle payment automatically
 ```
 
-Any x402-compatible wallet/client handles the payment flow automatically. $0.008 USDC per request.
+Any x402-compatible wallet/client handles the payment flow automatically. $0.02 USDC per request.
 
 ### MCP (Claude Code, Cursor, Windsurf)
 
@@ -58,22 +58,32 @@ One tool: `solana_token_safety_check` — free rug risk score, summary, and Toke
 
 ### Discovery
 
+Machine-readable service descriptions for automated agent + aggregator discovery:
+
 ```bash
-curl https://tokensafe-production.up.railway.app/.well-known/x402
+curl https://tokensafe-production.up.railway.app/openapi.json          # OpenAPI 3.1 (x-x402 per paid op)
+curl https://tokensafe-production.up.railway.app/.well-known/x402      # x402 manifest (x402scan compat)
+curl https://tokensafe-production.up.railway.app/discovery/resources   # x402 Bazaar resource list
+curl https://tokensafe-production.up.railway.app/llms.txt              # agent guide (markdown)
 ```
 
-Machine-readable service description for automated agent discovery.
+All discovery documents are generated from a single source of truth
+(`src/discovery/catalog.ts`), so advertised prices can never drift from the
+prices the x402 payment gate actually charges.
 
 ## Endpoints
 
 | Endpoint                                 | Price       | Auth | Rate Limit |
 | ---------------------------------------- | ----------- | ---- | ---------- |
-| `GET /v1/check?mint=<ADDR>`              | $0.008 USDC | x402 | 60/min/IP  |
+| `GET /v1/check?mint=<ADDR>`              | $0.02 USDC  | x402 | 60/min/IP  |
 | `GET /v1/check/lite?mint=<ADDR>`         | Free        | None | 30/min/IP  |
 | `GET /v1/decide?mint=<ADDR>&threshold=N` | Free        | None | 30/min/IP  |
 | `GET /health`                            | Free        | None | 60/min/IP  |
 | `POST /mcp`                              | Free        | None | 30/min/IP  |
 | `GET /.well-known/x402`                  | Free        | None | —          |
+| `GET /openapi.json`                      | Free        | None | —          |
+| `GET /discovery/resources`              | Free        | None | —          |
+| `GET /llms.txt`                          | Free        | None | —          |
 
 ## Response (Full Check)
 
@@ -132,7 +142,7 @@ Delta detection is automatic — `changes` and `alerts` populate when a token's 
   "has_risky_extensions": false,
   "full_report": {
     "url": "https://tokensafe-production.up.railway.app/v1/check?mint=So11111111111111111111111111111111111111112",
-    "price_usd": "$0.008",
+    "price_usd": "$0.02",
     "payment_protocol": "x402",
     "includes": "authority addresses, holder breakdown, LP lock status, honeypot details, delta detection"
   }
@@ -144,12 +154,13 @@ Delta detection is automatic — `changes` and `alerts` populate when a token's 
 ```
 Agent  →  GET /v1/check?mint=<TOKEN>
 Server →  402 + PAYMENT-REQUIRED header (base64 JSON)
-Agent  →  wallet auto-signs $0.008 USDC transfer
+Agent  →  wallet auto-signs $0.02 USDC transfer
 Agent  →  GET /v1/check?mint=<TOKEN> + PAYMENT-SIGNATURE header
 Server →  200 + full analysis + PAYMENT-RESPONSE receipt
 ```
 
-USDC settles to the operator's Solana wallet in ~400ms via the PayAI facilitator.
+USDC settles to the operator's Solana wallet via the Coinbase CDP facilitator
+(configurable with `FACILITATOR_URL`).
 
 ## Self-Hosting
 

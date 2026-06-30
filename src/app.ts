@@ -23,6 +23,7 @@ import {
 import { adminRouter } from "./routes/admin.js";
 import { freeCheckRouter, paidCheckRouter } from "./routes/check.js";
 import { auditReadRouter, auditWriteRouter } from "./routes/audit.js";
+import { discoveryRouter } from "./discovery/router.js";
 
 export const app = express();
 app.set("trust proxy", 1);
@@ -119,65 +120,11 @@ app.use((req, res, next) => {
   next();
 });
 
-// 3. x402 discovery document — enables x402scan auto-registration
-app.get("/.well-known/x402", (_req, res) => {
-  const base = `${_req.protocol}://${_req.get("host")}`;
-  res.json({
-    version: 1,
-    resources: [
-      `${base}/v1/check?mint=So11111111111111111111111111111111111111112`,
-    ],
-    ownershipProofs: config.ownershipProof ? [config.ownershipProof] : [],
-    instructions: [
-      "# TokenSafe — Solana Token Safety Scanner",
-      "",
-      "Deterministic on-chain analysis. No third-party APIs, no opaque ML.",
-      "",
-      "## Endpoints",
-      "",
-      "| Endpoint | Price | Description |",
-      "|----------|-------|-------------|",
-      "| `GET /v1/check?mint=<ADDR>` | $0.008 USDC | Full safety analysis |",
-      "| `GET /v1/check/lite?mint=<ADDR>` | Free | Risk score, level, summary, liquidity rating, holder concentration, honeypot, delta detection |",
-      "| `GET /v1/decide?mint=<ADDR>&threshold=N` | Free | Binary SAFE/RISKY/UNKNOWN decision |",
-      "| `POST /v1/check/batch/small` | $0.025 (up to 5) | Batch safety check |",
-      "| `POST /v1/check/batch/medium` | $0.08 (up to 20) | Batch safety check |",
-      "| `POST /v1/check/batch/large` | $0.15 (up to 50) | Batch safety check |",
-      "| `POST /v1/audit/small` | $0.08 USDC (up to 10) | Treasury audit with policy evaluation |",
-      "| `POST /v1/audit/standard` | $0.30 USDC (up to 50) | Treasury audit with policy evaluation |",
-      "| `GET /v1/audit/history` | API key or Bearer | Audit history |",
-      "| `GET /v1/audit/:id/report` | API key or Bearer | Compliance report (markdown) |",
-      "| `POST /v1/webhooks` | Bearer auth | Webhook subscription management (CRUD) |",
-      "| `POST /v1/api-keys` | Bearer auth | API key management (CRUD) |",
-      "| `POST /mcp` | Free | MCP Streamable HTTP — AI agent tool discovery |",
-      "| `GET /health` | Free | Server status |",
-      "| `GET /metrics` | Bearer auth | Prometheus metrics |",
-      "",
-      "## Authentication",
-      "",
-      "- **x402 (default):** Pay $0.008 USDC per request. No API key needed.",
-      "- **API key (subscription):** Include `X-API-Key: tks_...` header to skip x402.",
-      "  Pro ($49/mo): 200 req/min, 6K checks/month. Enterprise ($199/mo): 600 req/min, unlimited.",
-      "",
-      "## Rate Limits",
-      "",
-      "- Paid endpoints (x402): 60 req/min per IP",
-      "- Paid endpoints (API key): per-tier rate limit",
-      "- Lite endpoint: 30 req/min per IP",
-      "- Cached results (< 5min): instant response",
-      "",
-      "## Checks Performed",
-      "",
-      "Mint authority, freeze authority, top holder concentration, liquidity depth,",
-      "LP lock status, sell-side honeypot detection, metadata mutability, token age,",
-      "Token-2022 extensions (transfer fees, permanent delegate, transfer hooks).",
-      "",
-      "## Support",
-      "",
-      "GitHub: https://github.com/ampactor-labs/tokensafe",
-    ].join("\n"),
-  });
-});
+// 3. Discovery documents — GET /openapi.json (+ /swagger.json, /v3/api-docs),
+//    /.well-known/x402, /discovery/resources (+ aggregator path variants),
+//    /llms.txt, /.well-known/api-catalog. Mounted before the x402 gate so
+//    crawlers get 200s; all derived from the canonical resource catalog.
+app.use("/", discoveryRouter);
 
 // 4. Health endpoint — free, separate rate limiter
 app.get("/health", healthRateLimiter, (_req, res) => {

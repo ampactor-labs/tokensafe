@@ -119,7 +119,7 @@ async function main() {
     assert(pr !== null && pr.length > 0, "missing PAYMENT-REQUIRED header");
   });
 
-  await check("402 PAYMENT-REQUIRED contains $0.008 price", async () => {
+  await check("402 PAYMENT-REQUIRED contains $0.02 price", async () => {
     const res = await fetch(`${BASE}/v1/check?mint=${WSOL}`);
     const pr = res.headers.get("payment-required");
     assert(pr !== null, "missing header");
@@ -128,8 +128,8 @@ async function main() {
     const accept = decoded.accepts?.[0];
     assert(accept !== undefined, "missing accepts[0] in payment requirements");
     assert(
-      accept.amount === "8000",
-      `expected amount=8000, got ${accept.amount}`,
+      accept.amount === "20000",
+      `expected amount=20000, got ${accept.amount}`,
     );
     assert(
       accept.scheme === "exact",
@@ -315,8 +315,8 @@ async function main() {
       "missing full_report object",
     );
     assert(
-      body.full_report.price_usd === "$0.008",
-      `full_report price expected $0.008, got ${body.full_report.price_usd}`,
+      body.full_report.price_usd === "$0.02",
+      `full_report price expected $0.02, got ${body.full_report.price_usd}`,
     );
     assert(
       body.full_report.payment_protocol === "x402",

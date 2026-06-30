@@ -48,6 +48,18 @@ export const config = {
   proRateLimit: parseInt(process.env.PRO_RATE_LIMIT || "200", 10),
   enterpriseRateLimit: parseInt(process.env.ENTERPRISE_RATE_LIMIT || "600", 10),
   backupRpcUrl: process.env.BACKUP_RPC_URL || "",
+  // Canonical https origin for discovery docs + ownership-proof matching.
+  // Empty → derive from the (proxied) request. Set behind a proxy/CDN.
+  publicBaseUrl: process.env.PUBLIC_BASE_URL || "",
+  x402Version: 2,
+  // Paid full-check MCP tool (x402-over-MCP). OFF by default — flip to true only
+  // after confirming a real settlement on testnet (scripts/x402-mcp-client.ts).
+  paidMcpToolEnabled: process.env.PAID_MCP_TOOL_ENABLED === "true",
+  // USDC mint per network — the asset advertised in x402 discovery `accepts`.
+  usdcMint:
+    solanaNetwork === "mainnet"
+      ? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+      : "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
 } as const;
 
 // Startup validation
