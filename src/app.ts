@@ -20,6 +20,12 @@ import {
   httpRequestsTotal,
   apiKeyRequestsTotal,
 } from "./utils/metrics.js";
+import {
+  isPaidRoute,
+  priceUsdForRoute,
+  recordSettledPayment,
+} from "./utils/revenue.js";
+import { decodePaymentResponseHeader } from "@x402/core/http";
 import { adminRouter } from "./routes/admin.js";
 import { freeCheckRouter, paidCheckRouter } from "./routes/check.js";
 import { auditReadRouter, auditWriteRouter } from "./routes/audit.js";
@@ -101,6 +107,37 @@ app.use((req, res, next) => {
       .labels(req.method, route, status)
       .observe(latencyMs / 1000);
     httpRequestsTotal.labels(req.method, route, status).inc();
+
+    // Revenue signal — real settled payment vs. unpaid 402 probe. A payer gets
+    // a 2xx on a paid route carrying a PAYMENT-RESPONSE receipt; bots never do.
+    if (res.statusCode >= 200 && res.statusCode < 300 && isPaidRoute(route)) {
+      const receipt = res.getHeader("PAYMENT-RESPONSE");
+      if (receipt) {
+        let payer: string | undefined;
+        let tx: string | undefined;
+        try {
+          const settle = decodePaymentResponseHeader(String(receipt));
+          payer = settle.payer;
+          tx = settle.transaction;
+        } catch {
+          // malformed receipt — still count the settlement
+        }
+        recordSettledPayment({
+          source: route === "/mcp" ? "mcp_x402" : "x402",
+          endpoint: route,
+          priceUsd: priceUsdForRoute(route),
+          payer,
+          tx,
+          mint: typeof req.query.mint === "string" ? req.query.mint : undefined,
+        });
+      } else if (req.apiKeyRecord && route !== "/mcp") {
+        recordSettledPayment({
+          source: "api_key",
+          endpoint: route,
+          priceUsd: 0,
+        });
+      }
+    }
   });
   next();
 });
