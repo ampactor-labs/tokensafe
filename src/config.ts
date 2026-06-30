@@ -52,6 +52,9 @@ export const config = {
   // Empty → derive from the (proxied) request. Set behind a proxy/CDN.
   publicBaseUrl: process.env.PUBLIC_BASE_URL || "",
   x402Version: 2,
+  // Paid full-check MCP tool (x402-over-MCP). OFF by default — flip to true only
+  // after confirming a real settlement on testnet (scripts/x402-mcp-client.ts).
+  paidMcpToolEnabled: process.env.PAID_MCP_TOOL_ENABLED === "true",
   // USDC mint per network — the asset advertised in x402 discovery `accepts`.
   usdcMint:
     solanaNetwork === "mainnet"

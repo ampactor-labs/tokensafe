@@ -169,7 +169,7 @@ function makeLite(
     uncertainty_penalties: null,
     full_report: {
       url: `/v1/check?mint=${WSOL}`,
-      price_usd: "$0.008",
+      price_usd: "$0.02",
       payment_protocol: "x402",
       includes:
         "authority addresses, holder breakdown, LP lock status, honeypot details, delta detection",

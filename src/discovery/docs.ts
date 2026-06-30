@@ -3,6 +3,7 @@ import {
   catalog,
   paidEntries,
   mcpResource,
+  mcpPaidTool,
   buildBazaarInfo,
   buildAccepts,
   usdToBaseUnits,
@@ -133,6 +134,33 @@ export function buildDiscoveryResources(
         },
       },
     });
+
+    // Paid full-check MCP tool — advertised only when enabled.
+    if (config.paidMcpToolEnabled) {
+      const priceEntry = catalog.find((e) => e.path === mcpPaidTool.pricePath);
+      items.push({
+        resource: `${baseUrl}${mcpResource.path}#${mcpPaidTool.toolName}`,
+        type: "mcp",
+        x402Version: config.x402Version,
+        accepts: priceEntry ? buildAccepts(priceEntry) : [],
+        lastUpdated: BOOT_TIME,
+        metadata: {
+          serviceName: "TokenSafe",
+          description: mcpPaidTool.description,
+          tags: [...SERVICE_TAGS, "mcp", "paid"],
+          iconUrl: `${baseUrl}/icon.svg`,
+          info: {
+            input: {
+              type: "mcp",
+              toolName: mcpPaidTool.toolName,
+              transport: mcpPaidTool.transport,
+              inputSchema: mcpPaidTool.inputSchema,
+              example: mcpPaidTool.example,
+            },
+          },
+        },
+      });
+    }
   }
 
   const total = items.length;

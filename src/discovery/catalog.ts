@@ -57,7 +57,7 @@ export const catalog: ResourceEntry[] = [
     method: "GET",
     path: "/v1/check",
     paid: true,
-    priceUsd: 0.008,
+    priceUsd: 0.02,
     title: "Full Solana token safety check",
     description:
       "Solana token safety check — mint authority, freeze authority, top holder concentration, liquidity, honeypot detection, metadata mutability, token age, Token-2022 extension risks, rug risk score",
@@ -69,10 +69,10 @@ export const catalog: ResourceEntry[] = [
     method: "POST",
     path: "/v1/check/batch/small",
     paid: true,
-    priceUsd: 0.025,
+    priceUsd: 0.07,
     maxTokens: 5,
     title: "Batch token safety check (up to 5)",
-    description: "Batch token safety check — up to 5 tokens at $0.005/token",
+    description: "Batch token safety check — up to 5 tokens at $0.014/token",
     tags: ["batch"],
     exampleBody: { mints: [EXAMPLE_MINT] },
     outputExample: BATCH_OUTPUT_EXAMPLE,
@@ -81,10 +81,10 @@ export const catalog: ResourceEntry[] = [
     method: "POST",
     path: "/v1/check/batch/medium",
     paid: true,
-    priceUsd: 0.08,
+    priceUsd: 0.2,
     maxTokens: 20,
     title: "Batch token safety check (up to 20)",
-    description: "Batch token safety check — up to 20 tokens at $0.004/token",
+    description: "Batch token safety check — up to 20 tokens at $0.010/token",
     tags: ["batch"],
     exampleBody: { mints: [EXAMPLE_MINT] },
     outputExample: BATCH_OUTPUT_EXAMPLE,
@@ -93,10 +93,10 @@ export const catalog: ResourceEntry[] = [
     method: "POST",
     path: "/v1/check/batch/large",
     paid: true,
-    priceUsd: 0.15,
+    priceUsd: 0.4,
     maxTokens: 50,
     title: "Batch token safety check (up to 50)",
-    description: "Batch token safety check — up to 50 tokens at $0.003/token",
+    description: "Batch token safety check — up to 50 tokens at $0.008/token",
     tags: ["batch"],
     exampleBody: { mints: [EXAMPLE_MINT] },
     outputExample: BATCH_OUTPUT_EXAMPLE,
@@ -105,7 +105,7 @@ export const catalog: ResourceEntry[] = [
     method: "POST",
     path: "/v1/audit/small",
     paid: true,
-    priceUsd: 0.08,
+    priceUsd: 0.15,
     maxTokens: 10,
     title: "Treasury audit (up to 10)",
     description:
@@ -117,7 +117,7 @@ export const catalog: ResourceEntry[] = [
     method: "POST",
     path: "/v1/audit/standard",
     paid: true,
-    priceUsd: 0.3,
+    priceUsd: 0.6,
     maxTokens: 50,
     title: "Treasury audit (up to 50)",
     description:
@@ -178,7 +178,33 @@ export const mcpResource = {
   example: { mint_address: EXAMPLE_MINT } as Record<string, unknown>,
 };
 
+/** Paid full-check MCP tool — x402-gated, priced at the /v1/check rate. */
+export const mcpPaidTool = {
+  toolName: "solana_token_safety_check_full",
+  transport: "streamable-http" as const,
+  pricePath: "/v1/check",
+  description:
+    "Full Solana token safety report (paid via x402): individual authority addresses, holder breakdown, LP lock identity, honeypot sell tax, and field-level delta detection. Returns an x402 payment challenge when called without payment.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      mint_address: {
+        type: "string",
+        description: "Solana token mint address in base58 format",
+      },
+    },
+    required: ["mint_address"],
+  } as Record<string, unknown>,
+  example: { mint_address: EXAMPLE_MINT } as Record<string, unknown>,
+};
+
 export const paidEntries = catalog.filter((e) => e.paid);
+
+/** Look up the "$X" price string for a catalog path (single source of truth). */
+export function priceStringFor(path: string): string {
+  const entry = catalog.find((e) => e.path === path && e.paid);
+  return entry ? usdToPriceString(entry.priceUsd) : "";
+}
 
 /** USDC has 6 decimals — convert a USD price to atomic base-units string. */
 export function usdToBaseUnits(usd: number): string {
@@ -225,7 +251,9 @@ export function buildBazaarInfo(e: ResourceEntry): BazaarInfo {
 
 export interface PaymentRequirementsV2 {
   scheme: string;
-  network: string;
+  /** CAIP-2 network id, e.g. "solana:5eykt4...". Template-literal type matches
+   * the x402 `Network` type so these requirements feed verify/settle directly. */
+  network: `${string}:${string}`;
   amount: string;
   asset: string;
   payTo: string;

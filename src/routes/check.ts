@@ -8,6 +8,7 @@ import { checkToken, checkTokenLite } from "../analysis/token-checker.js";
 import { rateLimiter } from "../utils/rate-limit.js";
 import { tokenChecksTotal } from "../utils/metrics.js";
 import { createMcpServer } from "../mcp/server.js";
+import { isPaidMcpToolCall, handlePaidMcpToolCall } from "../mcp/payment.js";
 
 // Free check routes — mounted BEFORE the auth stack
 export const freeCheckRouter = Router();
@@ -219,6 +220,12 @@ paidCheckRouter.post(
   express.json(),
   async (req, res) => {
     try {
+      // x402-gate the paid full-check tool before the transport (one POST
+      // carries both free and paid tool calls, so we gate at the JSON-RPC layer).
+      if (config.paidMcpToolEnabled && isPaidMcpToolCall(req.body)) {
+        await handlePaidMcpToolCall(req, res);
+        return;
+      }
       const baseUrl = `${req.protocol}://${req.get("host")}`;
       const server = createMcpServer(baseUrl);
       const transport = new StreamableHTTPServerTransport({

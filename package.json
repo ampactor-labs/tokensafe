@@ -9,6 +9,7 @@
     "test": "vitest run",
     "test:smoke": "tsx scripts/smoke.ts",
     "test:x402": "tsx scripts/x402-client.ts",
+    "test:x402-mcp": "tsx scripts/x402-mcp-client.ts",
     "wallet:generate": "tsx scripts/generate-test-wallet.ts"
   },
   "dependencies": {

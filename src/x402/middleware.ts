@@ -76,7 +76,7 @@ const facilitator = new HTTPFacilitatorClient({
   createAuthHeaders: buildCdpAuthHeaders(),
 });
 
-const resourceServer = new x402ResourceServer(facilitator);
+export const resourceServer = new x402ResourceServer(facilitator);
 registerExactSvmScheme(resourceServer);
 
 const baseAccepts = {

@@ -21,6 +21,7 @@ import {
   isTrustedFreezeAuthority,
 } from "./risk-score.js";
 import { ApiError } from "../utils/errors.js";
+import { priceStringFor } from "../discovery/catalog.js";
 import { degradedChecksTotal, rpcLatency } from "../utils/metrics.js";
 import { logger } from "../utils/logger.js";
 import { reportRpcFailure, reportRpcSuccess } from "../solana/rpc.js";
@@ -260,7 +261,7 @@ export async function checkTokenLite(
         : null,
       full_report: {
         url: `${baseUrl || ""}/v1/check?mint=${mintAddress}`,
-        price_usd: "$0.008",
+        price_usd: priceStringFor("/v1/check"),
         payment_protocol: "x402",
         includes:
           "authority addresses, holder breakdown, LP lock status, honeypot details, delta detection",

@@ -30,7 +30,7 @@ describe("discovery — OpenAPI", () => {
     expect(res.body.servers[0].url).toMatch(/^https?:\/\//);
 
     const check = res.body.paths["/v1/check"].get;
-    expect(check["x-x402"].price).toBe("$0.008");
+    expect(check["x-x402"].price).toBe("$0.02");
     expect(check["x-x402"].asset).toBe(config.usdcMint);
     expect(check.responses["402"]).toBeDefined();
 
@@ -82,7 +82,7 @@ describe("discovery — /discovery/resources (x402 Bazaar shape)", () => {
     expect(check.type).toBe("http");
     expect(check.x402Version).toBe(2);
     expect(check.accepts[0].scheme).toBe("exact");
-    expect(check.accepts[0].amount).toBe(usdToBaseUnits(0.008)); // "8000"
+    expect(check.accepts[0].amount).toBe(usdToBaseUnits(0.02)); // "20000"
     expect(check.accepts[0].network).toContain(":");
     expect(check.metadata.info.input.type).toBe("http");
 
@@ -126,7 +126,8 @@ describe("discovery — llms.txt + api-catalog", () => {
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("text/markdown");
     expect(res.text).toContain("/openapi.json");
-    expect(res.text).toContain("$0.008 USDC");
+    expect(res.text).toContain("$0.02 USDC");
+    expect(res.text).toContain("$0.60 USDC");
   });
 
   it("serves RFC 9727 api-catalog linkset", async () => {
