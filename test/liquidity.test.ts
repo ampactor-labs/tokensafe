@@ -299,6 +299,41 @@ describe("checkLiquidity", () => {
     expect(result.lp_locked).toBe(true);
   });
 
+  it("treats LP burned to the incinerator as permanently locked (not a false 'unlocked')", async () => {
+    const lpMint = PublicKey.unique();
+    const incinerator = new PublicKey(
+      "1nc1nerator11111111111111111111111111111111",
+    );
+    const tokenAccount = PublicKey.unique();
+    const poolAddr = PublicKey.unique().toBase58();
+
+    const mockConnection = {
+      getAccountInfo: vi.fn().mockResolvedValue(makePoolAccount(lpMint)),
+      getTokenLargestAccounts: vi.fn().mockResolvedValue({
+        value: [
+          {
+            address: tokenAccount,
+            amount: "1000000",
+            decimals: 6,
+            uiAmount: 1,
+          },
+        ],
+      }),
+      getMultipleAccountsInfo: vi
+        .fn()
+        .mockResolvedValue([makeTokenAccountInfo(incinerator)]),
+    };
+    mockGetConnection.mockReturnValue(mockConnection as any);
+
+    const result = await checkLiquidity(
+      FAKE_MINT,
+      makeQuote({ primaryPool: "Raydium", poolAddress: poolAddr }),
+    );
+    expect(result.lp_locked).toBe(true);
+    expect(result.lp_locker).toBe("Burned (incinerator)");
+    expect(result.lp_lock_percentage).toBeGreaterThan(0);
+  });
+
   it("returns lp_locked=false when no known locker found", async () => {
     const lpMint = PublicKey.unique();
     const randomOwner = PublicKey.unique();

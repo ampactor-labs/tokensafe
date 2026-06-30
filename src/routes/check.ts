@@ -9,6 +9,7 @@ import { rateLimiter } from "../utils/rate-limit.js";
 import { tokenChecksTotal } from "../utils/metrics.js";
 import { createMcpServer } from "../mcp/server.js";
 import { isPaidMcpToolCall, handlePaidMcpToolCall } from "../mcp/payment.js";
+import { createApiKey } from "../utils/api-keys.js";
 
 // Free check routes — mounted BEFORE the auth stack
 export const freeCheckRouter = Router();
@@ -210,6 +211,47 @@ paidCheckRouter.post(
   "/v1/check/batch/large",
   batchJsonParser,
   batchHandler(50),
+);
+
+// Self-serve subscription — pay once via x402, get a 30-day Pro API key.
+// Reuses the existing Pro tier (createApiKey + validate/usage/rate-limit/expiry
+// are all wired in app.ts). MUST be paid with x402: a request carrying a valid
+// API key skips the x402 gate (app.ts), so we reject key-authenticated requests
+// here — otherwise one paid key could mint unlimited free keys.
+const SUBSCRIPTION_DAYS = 30;
+paidCheckRouter.post(
+  "/v1/subscribe",
+  express.json({ limit: "4kb" }),
+  (req, res, next) => {
+    try {
+      if (req.apiKeyRecord) {
+        throw new ApiError(
+          "PAYMENT_REQUIRED",
+          "Subscriptions must be purchased with an x402 payment, not an existing API key.",
+        );
+      }
+      const expiresAt = new Date(
+        Date.now() + SUBSCRIPTION_DAYS * 86_400_000,
+      ).toISOString();
+      const { fullKey, record } = createApiKey(
+        "x402 self-serve (30d)",
+        "pro",
+        expiresAt,
+      );
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.status(201).json({
+        api_key: fullKey,
+        tier: record.tier,
+        expires_at: record.expires_at,
+        monthly_limit: record.monthly_limit,
+        rate_limit_per_minute: record.rate_limit_per_minute,
+        note: "Save this key now — it is shown once. Send it as the X-API-Key header to skip per-call x402 payment.",
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
 );
 
 // MCP Streamable HTTP — stateless, free, rate-limited

@@ -57,7 +57,7 @@ describe("discovery — .well-known/x402", () => {
     expect(res.status).toBe(200);
     expect(res.body.version).toBe(1);
     expect(Array.isArray(res.body.resources)).toBe(true);
-    expect(res.body.resources.length).toBe(6);
+    expect(res.body.resources.length).toBe(7); // 6 check/batch/audit + /v1/subscribe
     expect(
       res.body.resources.some((r: string) => /^GET \S+\/v1\/check\?mint=/.test(r)),
     ).toBe(true);

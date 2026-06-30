@@ -56,6 +56,31 @@ export function signResponse(payload: SignablePayload): string {
   return signature.toString("hex");
 }
 
+/**
+ * Verify a signature against the current signer pubkey. Recomputes the exact
+ * canonical sha256 digest signResponse() signs, then ed25519-verifies. Returns
+ * false on any malformed input rather than throwing. Note: only verifies
+ * signatures from the CURRENT key — set RESPONSE_SIGNING_KEY so the key (and
+ * thus verifiability) survives restarts/deploys.
+ */
+export function verifyResponse(
+  payload: SignablePayload,
+  signatureHex: string,
+): boolean {
+  try {
+    const canonical = JSON.stringify({
+      mint: payload.mint,
+      checked_at: payload.checked_at,
+      rpc_slot: payload.rpc_slot,
+      risk_score: payload.risk_score,
+    });
+    const digest = crypto.createHash("sha256").update(canonical).digest();
+    return crypto.verify(null, digest, publicKey, Buffer.from(signatureHex, "hex"));
+  } catch {
+    return false;
+  }
+}
+
 export function getSignerPubkey(): string {
   const spki = publicKey.export({ type: "spki", format: "der" });
   // Ed25519 SPKI is 44 bytes: 12 bytes header + 32 bytes raw key

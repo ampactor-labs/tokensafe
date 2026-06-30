@@ -41,6 +41,14 @@ const BASE_VAULT_OFFSET = 336;
 const QUOTE_VAULT_OFFSET = 368;
 const LP_MINT_OFFSET = 464;
 
+// Solana "incinerator" sink address. LP sent here is permanently inaccessible —
+// the dev can never pull it — so for liquidity-safety purposes it counts as a
+// permanent lock (the dominant "burn LP" pattern on Solana memecoins). Without
+// this, burned LP shows up as a non-locker top holder and is wrongly penalized
+// as "unlocked". (Supply is unchanged by an incinerator send, but the tokens
+// are unspendable — which is what matters for rug risk.)
+const INCINERATOR = "1nc1nerator11111111111111111111111111111111";
+
 import { KNOWN_LOCKERS } from "./known-programs.js";
 // Re-export for backwards compatibility (tests import from liquidity.ts)
 export { KNOWN_LOCKERS };
@@ -225,7 +233,9 @@ async function detectLpLock(poolAddress: string): Promise<LpLockResult | null> {
     const ownerPubkey = new PublicKey(info.data.subarray(32, 64));
     const ownerStr = ownerPubkey.toBase58();
 
-    const lockerName = KNOWN_LOCKERS.get(ownerStr);
+    const lockerName =
+      KNOWN_LOCKERS.get(ownerStr) ??
+      (ownerStr === INCINERATOR ? "Burned (incinerator)" : undefined);
     if (lockerName) {
       lockedAmount += BigInt(top5[i].amount);
       if (!lockedIn) lockedIn = lockerName;

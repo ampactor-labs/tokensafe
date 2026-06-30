@@ -126,6 +126,23 @@ export const catalog: ResourceEntry[] = [
     exampleBody: { mints: [EXAMPLE_MINT] },
   },
   {
+    method: "POST",
+    path: "/v1/subscribe",
+    paid: true,
+    priceUsd: 49,
+    title: "Pro API key (30 days)",
+    description:
+      "Self-serve Pro API key valid for 30 days — 6000 checks/month, 200 req/min. Pay once via x402 USDC; use the returned key as the X-API-Key header to skip per-call payment.",
+    tags: ["subscription"],
+    exampleBody: {},
+    outputExample: {
+      api_key: "tks_…",
+      tier: "pro",
+      expires_at: "2026-07-30T00:00:00.000Z",
+      monthly_limit: 6000,
+    },
+  },
+  {
     method: "GET",
     path: "/v1/check/lite",
     paid: false,

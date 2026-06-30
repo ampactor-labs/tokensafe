@@ -48,7 +48,7 @@ const data = await res.json();
 
 TokenSafe supports two authentication methods for paid endpoints:
 
-1. **x402 micropayments (default):** Pay $0.008 USDC per request. No accounts needed. Payment is authentication.
+1. **x402 micropayments (default):** Pay $0.02 USDC per request. No accounts needed. Payment is authentication.
 2. **API key (subscription):** Include `X-API-Key` header to skip x402. Pro ($49/mo): 200 req/min, 6K checks/month. Enterprise ($199/mo): 600 req/min, unlimited checks.
 
 Free endpoints (`/v1/check/lite`, `/v1/decide`, `/health`) require neither.
@@ -59,7 +59,7 @@ TokenSafe uses the [x402 protocol](https://github.com/coinbase/x402) for per-req
 
 1. Agent sends `GET /v1/check?mint=<MINT>` with no auth headers
 2. Server returns `402 Payment Required` with a `PAYMENT-REQUIRED` header
-3. Agent's x402 client automatically signs a USDC transfer ($0.008)
+3. Agent's x402 client automatically signs a USDC transfer ($0.02)
 4. Agent retries the request with `PAYMENT-SIGNATURE` header
 5. Facilitator verifies and settles on-chain (~400ms)
 6. Server returns `200 OK` with full token safety data + `PAYMENT-RESPONSE` header
@@ -74,7 +74,7 @@ When a request requires payment, the server returns HTTP 402 with a base64-encod
 {
   "scheme": "exact",
   "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
-  "maxAmountRequired": "8000",
+  "maxAmountRequired": "20000",
   "resource": "https://tokensafe-production.up.railway.app/v1/check",
   "description": "Solana token safety check",
   "payTo": "<TREASURY_WALLET>",
@@ -85,7 +85,7 @@ When a request requires payment, the server returns HTTP 402 with a base64-encod
 }
 ```
 
-- `maxAmountRequired`: `"8000"` = $0.008 USDC (6 decimals)
+- `maxAmountRequired`: `"20000"` = $0.02 USDC (6 decimals)
 - `asset.address`: USDC on Solana mainnet
 - `network`: Solana mainnet in CAIP-2 format
 
@@ -105,11 +105,11 @@ const keypairBytes = base58.decode(process.env.SVM_PRIVATE_KEY!);
 const keypair = await createKeyPairSignerFromBytes(keypairBytes);
 ```
 
-Fund the wallet with USDC on Solana mainnet. Each check costs $0.008 USDC (8000 raw units).
+Fund the wallet with USDC on Solana mainnet. Each check costs $0.02 USDC (20000 raw units).
 
 ## Endpoints
 
-### `GET /v1/check?mint=<MINT>` — Full Safety Analysis ($0.008 USDC)
+### `GET /v1/check?mint=<MINT>` — Full Safety Analysis ($0.02 USDC)
 
 Returns comprehensive risk assessment for a single Solana token. Requires x402 payment.
 
@@ -234,11 +234,11 @@ Rate-limited to 30 requests/minute per IP. Returns a SAFE/RISKY/UNKNOWN decision
 | `degraded_checks` | string[] \| undefined | Present when `decision` is UNKNOWN — names of checks that failed                  |
 | `full_report`     | object                | Structured CTA for full paid analysis                                             |
 
-### `POST /v1/check/batch/small` — Batch Check, 5 Tokens ($0.025 USDC)
+### `POST /v1/check/batch/small` — Batch Check, 5 Tokens ($0.07 USDC)
 
-### `POST /v1/check/batch/medium` — Batch Check, 20 Tokens ($0.08 USDC)
+### `POST /v1/check/batch/medium` — Batch Check, 20 Tokens ($0.20 USDC)
 
-### `POST /v1/check/batch/large` — Batch Check, 50 Tokens ($0.15 USDC)
+### `POST /v1/check/batch/large` — Batch Check, 50 Tokens ($0.40 USDC)
 
 Batch safety analysis with tiered pricing. Requires x402 payment. Send a JSON body with a `mints` array.
 
@@ -262,15 +262,15 @@ Batch safety analysis with tiered pricing. Requires x402 payment. Send a JSON bo
 
 | Tier            | Max Tokens | Price  | Per Token |
 | --------------- | ---------- | ------ | --------- |
-| `/batch/small`  | 5          | $0.025 | $0.005    |
-| `/batch/medium` | 20         | $0.08  | $0.004    |
-| `/batch/large`  | 50         | $0.15  | $0.003    |
+| `/batch/small`  | 5          | $0.07  | $0.014    |
+| `/batch/medium` | 20         | $0.20  | $0.010    |
+| `/batch/large`  | 50         | $0.40  | $0.008    |
 
 **Error codes:** `TOO_MANY_MINTS` (400) if array exceeds tier limit. `INVALID_MINT_ADDRESS` (400) if any mint is invalid base58.
 
-### `POST /v1/audit/small` — Treasury Audit, 10 Tokens ($0.08 USDC)
+### `POST /v1/audit/small` — Treasury Audit, 10 Tokens ($0.15 USDC)
 
-### `POST /v1/audit/standard` — Treasury Audit, 50 Tokens ($0.30 USDC)
+### `POST /v1/audit/standard` — Treasury Audit, 50 Tokens ($0.60 USDC)
 
 Run a policy-evaluated audit on a batch of tokens. Requires x402 payment or API key. Returns per-token results, policy violations, aggregate risk, and a signed attestation.
 
@@ -317,8 +317,8 @@ Run a policy-evaluated audit on a batch of tokens. Requires x402 payment or API 
 
 | Tier              | Max Tokens | Price |
 | ----------------- | ---------- | ----- |
-| `/audit/small`    | 10         | $0.08 |
-| `/audit/standard` | 50         | $0.30 |
+| `/audit/small`    | 10         | $0.15 |
+| `/audit/standard` | 50         | $0.60 |
 
 ### `GET /v1/audit/history` — Audit History (API Key or Bearer)
 
