@@ -2,6 +2,8 @@
 
 Solana token safety scanner. Deterministic on-chain analysis, cryptographically signed, behind x402 micropayments.
 
+**Status: shipping.** Live on mainnet behind x402 micropayments. No CI workflows in this repo; the deploy is Railway-side.
+
 **$0.02/request in USDC. No API keys, no accounts, no opaque ML.** Every verdict is read straight from chain state and Ed25519-signed — so anyone can verify TokenSafe said it, at [`/v1/verify`](#verifiable-attestations). Aggregators reselling third-party grades can't do that. Payment is authentication.
 
 **Try it:** [scry.app](https://scry-production.up.railway.app/) (web) · [@ScryTokenBot](https://t.me/ScryTokenBot) (Telegram)
@@ -210,6 +212,14 @@ TypeScript + Express. Every check reads raw Solana blockchain state via Helius R
 - 5-minute in-memory LRU cache (10K entries)
 - Ed25519 response signing for audit trail
 - Docker-ready (node:22-slim, non-root user)
+
+## Weak spots
+
+This reads chain state, so it can only catch what chain state shows. A developer who simply sells, an off-chain social rug, or a compromised team wallet all produce a clean report right up until they do not. A SAFE verdict means the checks below found nothing, not that the token is safe.
+
+Honeypot detection compares a Jupiter buy quote with a sell quote, which misses conditional logic that only refuses some sellers or only after some time. LP-lock detection recognizes nine known locker programs, so liquidity locked in an unrecognized contract reads as unlocked and scores worse than it deserves.
+
+No CI runs in this repo. The signing key, the treasury address, and the deploy live in Railway, so the receipts here are the signed response and the on-chain payment, not a green badge.
 
 ## License
 
