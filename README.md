@@ -213,6 +213,14 @@ TypeScript + Express. Every check reads raw Solana blockchain state via Helius R
 - Ed25519 response signing for audit trail
 - Docker-ready (node:22-slim, non-root user)
 
+## Verification
+
+18 test files, 525 cases, run with `npm test` (vitest). They cover the risk scoring, the Jupiter quote paths, the audit ledger, the delta endpoint, and the x402 payment middleware.
+
+`npm run test:smoke` hits a running instance end to end: it pays a real 402 challenge and checks that the Ed25519 signature on the response verifies. That is the check that matters here, because a signature nobody verifies is decoration.
+
+There is no CI workflow in this repo. Deploys go through Railway, so treat the signed response and the on-chain payment as the receipts rather than a badge.
+
 ## Weak spots
 
 This reads chain state, so it can only catch what chain state shows. A developer who simply sells, an off-chain social rug, or a compromised team wallet all produce a clean report right up until they do not. A SAFE verdict means the checks below found nothing, not that the token is safe.
