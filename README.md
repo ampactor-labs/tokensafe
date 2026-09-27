@@ -1,234 +1,95 @@
 # TokenSafe
 
-Solana token safety scanner. Deterministic on-chain analysis, cryptographically signed, behind x402 micropayments.
+An API that scores Solana tokens for rug-pull risk from on-chain data and sells the full report for $0.02 through x402 micropayments. A rug pull is a token whose creators drain its value; on-chain means recorded on the public ledger. x402 is an HTTP payment flow: the server answers 402 and the caller's wallet pays in USDC (a dollar stablecoin), then the retry returns a signed report. It is TypeScript on Express; seven of the nine checks read Solana through Helius RPC and two use Jupiter swap quotes.
 
-**Status: shipping.** Live on mainnet behind x402 micropayments. No CI workflows in this repo; the deploy is Railway-side.
+**Status: shipping.** This repository has no CI, and the paid tool on the MCP endpoint (the interface AI agents call) stays off until a real x402 settlement over it is confirmed.
 
-**$0.02/request in USDC. No API keys, no accounts, no opaque ML.** Every verdict is read straight from chain state and Ed25519-signed — so anyone can verify TokenSafe said it, at [`/v1/verify`](#verifiable-attestations). Aggregators reselling third-party grades can't do that. Payment is authentication.
+Live: https://scry-production.up.railway.app/ · Docs: [docs/API.md](docs/API.md) · [INTEGRATION.md](INTEGRATION.md)
 
-**Try it:** [scry.app](https://scry-production.up.railway.app/) (web) · [@ScryTokenBot](https://t.me/ScryTokenBot) (Telegram)
+## Quick start
 
-## What It Checks
-
-| Check            | What It Detects                          | Source                         |
-| ---------------- | ---------------------------------------- | ------------------------------ |
-| Mint authority   | Supply inflation risk                    | RPC `getAccountInfo`           |
-| Freeze authority | Token seizure risk                       | RPC `getAccountInfo`           |
-| Top holders      | Concentration / rug risk                 | RPC `getTokenLargestAccounts`  |
-| Liquidity        | Sellability, price impact                | Jupiter quote API              |
-| LP locks         | Liquidity removal risk                   | RPC + 9 known locker programs  |
-| Honeypot         | Can't-sell detection                     | Jupiter buy/sell comparison    |
-| Metadata         | Name/image bait-and-switch               | RPC Metaplex PDA               |
-| Token age        | Fresh launch signal                      | RPC `getSignaturesForAddress`  |
-| Token-2022       | Transfer fees, permanent delegate, hooks | TLV extension parsing          |
-
-Rug risk score 0-100 where every point is traceable to on-chain state. No third-party security APIs.
-
-## Quick Start
-
-### Free lite check (no payment needed)
+The API lives at `https://tokensafe-production.up.railway.app`. The lite check is free and needs no wallet (`mint` is the token's address on Solana; the one below is wrapped SOL):
 
 ```bash
-curl https://tokensafe-production.up.railway.app/v1/check/lite?mint=So11111111111111111111111111111111111111112
+curl 'https://tokensafe-production.up.railway.app/v1/check/lite?mint=So11111111111111111111111111111111111111112'
 ```
 
-Returns rug risk score, risk level, and summary. Rate-limited to 30/min per IP.
-
-### Full paid check (x402)
+It returns `risk_score`, `risk_level`, `summary`, flags such as `can_sell` and `authorities_renounced`, and a `full_report` pointer; wrapped SOL scored 5 (LOW) on 2026-09-27. The full check answers 402 until it is paid:
 
 ```bash
-# First request returns 402 with payment requirements
-curl -s https://tokensafe-production.up.railway.app/v1/check?mint=So11111111111111111111111111111111111111112
-
-# Use any x402-compatible client to handle payment automatically
+curl -sS -D - -o /dev/null 'https://tokensafe-production.up.railway.app/v1/check?mint=So11111111111111111111111111111111111111112'
 ```
 
-Any x402-compatible wallet/client handles the payment flow automatically. $0.02 USDC per request.
+The `PAYMENT-REQUIRED` header (base64 JSON) asks for 20000 base units of USDC, which has six decimals, so $0.02. Any x402 client, such as `@x402/fetch` as shown in [INTEGRATION.md](INTEGRATION.md), pays it and retries.
 
-### MCP (Claude Code, Cursor, Windsurf)
+For AI agents, the MCP endpoint exposes one free tool, `solana_token_safety_check`, which returns the lite result:
 
 ```bash
-# Claude Code plugin (recommended)
-/plugin marketplace add ampactor-labs/tokensafe
-/plugin install tokensafe@ampactor-labs
-
-# Or direct MCP server add
-claude mcp add tokensafe --transport http https://tokensafe-production.up.railway.app/mcp
+claude mcp add --transport http tokensafe https://tokensafe-production.up.railway.app/mcp
 ```
 
-One tool: `solana_token_safety_check` — free rug risk score, summary, and Token-2022 detection. Full report via x402 REST API.
+Claude Code can also install it as a plugin with `/plugin marketplace add ampactor-labs/tokensafe` followed by `/plugin install tokensafe@ampactor-labs`.
 
-### Discovery
+## Usage
 
-Machine-readable service descriptions for automated agent + aggregator discovery:
+Paid endpoints accept x402 or an `X-API-Key` header. `GET /v1/check` costs $0.02. Batches of up to 5, 20 or 50 mints (`POST /v1/check/batch/{small,medium,large}`) cost $0.07, $0.20 or $0.40. Treasury audits of up to 10 or 50 mints (`POST /v1/audit/{small,standard}`) cost $0.15 or $0.60 and add policy checks and a signed report. `POST /v1/subscribe` costs $49 for a 30-day Pro key good for 6,000 checks a month at 200 requests a minute; keys start with `tks_`. The lite check, `/v1/decide`, `/v1/verify`, `/health`, `/mcp` and the discovery documents are free. Paid routes and `/health` allow 60 requests a minute per IP; the free checks and `/mcp` allow 30. Prices are declared once in `src/discovery/catalog.ts`, which feeds both the payment gate and the discovery documents, so the price a caller pays cannot drift from the price advertised.
+
+`/v1/decide` turns the lite score into a yes or no against a threshold, for callers that only need a gate:
 
 ```bash
-curl https://tokensafe-production.up.railway.app/openapi.json          # OpenAPI 3.1 (x-x402 per paid op)
-curl https://tokensafe-production.up.railway.app/.well-known/x402      # x402 manifest (x402scan compat)
-curl https://tokensafe-production.up.railway.app/discovery/resources   # x402 Bazaar resource list
-curl https://tokensafe-production.up.railway.app/llms.txt              # agent guide (markdown)
+curl 'https://tokensafe-production.up.railway.app/v1/decide?mint=So11111111111111111111111111111111111111112&threshold=30'
 ```
 
-All discovery documents are generated from a single source of truth
-(`src/discovery/catalog.ts`), so advertised prices can never drift from the
-prices the x402 payment gate actually charges.
+On 2026-09-27 that returned `"decision":"SAFE","risk_score":5,"risk_level":"LOW","threshold_used":30,"score_reliable":true`. A degraded result answers UNKNOWN instead of guessing. Every endpoint, the response shapes, the scoring weights and the payment flow are in [docs/API.md](docs/API.md); webhooks, admin key management and error codes are in [INTEGRATION.md](INTEGRATION.md).
 
-## Endpoints
+## How it works
 
-| Endpoint                                 | Price       | Auth | Rate Limit |
-| ---------------------------------------- | ----------- | ---- | ---------- |
-| `GET /v1/check?mint=<ADDR>`              | $0.02 USDC  | x402 | 60/min/IP  |
-| `POST /v1/check/batch/{small,medium,large}` | $0.07 / $0.20 / $0.40 | x402 | 60/min/IP |
-| `POST /v1/audit/{small,standard}`        | $0.15 / $0.60 | x402 | 60/min/IP |
-| `POST /v1/subscribe`                     | $49 USDC    | x402 | 60/min/IP  |
-| `GET /v1/check/lite?mint=<ADDR>`         | Free        | None | 30/min/IP  |
-| `GET /v1/decide?mint=<ADDR>&threshold=N` | Free        | None | 30/min/IP  |
-| `POST /v1/verify`                        | Free        | None | 60/min/IP  |
-| `GET /health`                            | Free        | None | 60/min/IP  |
-| `POST /mcp`                              | Free        | None | 30/min/IP  |
-| `GET /.well-known/x402`                  | Free        | None | —          |
-| `GET /openapi.json`                      | Free        | None | —          |
-| `GET /discovery/resources`              | Free        | None | —          |
-| `GET /llms.txt`                          | Free        | None | —          |
+`src/app.ts` is an Express app. A request passes the discovery documents and `/health`, then the free routes (`/v1/check/lite`, `/v1/decide`, `/v1/verify`, the admin and audit-read routes), then the API-key check, then the x402 gate (`src/x402/middleware.ts`, built on `@x402/express`), and only then the paid routes. A check (`src/analysis/token-checker.ts`) reads the mint account first through Helius (a hosted Solana RPC provider), runs top holders, a buy-and-sell quote round trip on Jupiter (a Solana swap aggregator), metadata and token age in parallel, then liquidity and LP-lock detection, then scores, signs and diffs the result against the previous one for that mint. An uncached check makes between six and eleven RPC calls plus one to three HTTP calls, counted from the check modules with retries excluded. Results stay in a 5-minute in-memory LRU cache of 10,000 entries (30 seconds for degraded results), and concurrent requests for one mint share a single analysis.
 
-`POST /v1/subscribe` pays once via x402 and returns a 30-day Pro API key
-(6000 checks/mo, 200 req/min) — send it as `X-API-Key` to skip per-call payment.
+| Check | What it detects | Source |
+| --- | --- | --- |
+| Mint authority | Supply can still be inflated | RPC `getAccountInfo` and `getMint` |
+| Freeze authority | Holders' accounts can be frozen | same read |
+| Top holders | Concentration in the ten largest accounts, with accounts owned by known DeFi programs excluded | RPC `getTokenLargestAccounts` and `getMultipleAccounts` |
+| Liquidity | Whether a swap route exists and how deep it is | Jupiter quote, with DexScreener (a market-data site) as fallback |
+| LP lock | Whether a Raydium (a Solana exchange) AMM v4 pool's LP tokens, the receipts for its funds, sit in a known locker or the burn address | RPC, against nine locker program addresses |
+| Honeypot | Buying works but selling fails, or a sell tax | Jupiter buy quote against sell quote |
+| Metadata | Name and image can still be changed | RPC read of the Metaplex metadata account (the Solana metadata standard) |
+| Token age | Launched under 1 or under 24 hours ago | RPC `getSignaturesForAddress` |
+| Token-2022 (the newer token program) | Transfer fees, permanent delegate, transfer hooks | Type-length-value (TLV) extension data on the mint account |
 
-## Response (Full Check)
+The score (`src/analysis/risk-score.ts`) adds fixed penalties per finding and caps the total at 100: an active untrusted mint authority costs 15 to 30 points depending on maturity signals (deep liquidity, an established age, distributed holders), no liquidity 30, a failed sell 30, a permanent delegate 30, and so on. A score of 0 to 20 is LOW, 21 to 40 MODERATE, 41 to 60 HIGH, 61 to 80 CRITICAL and above that EXTREME. A check that cannot run adds an uncertainty penalty instead of silently passing. The full weight table is in [docs/API.md](docs/API.md#scoring).
 
-```json
-{
-  "mint": "So11111111111111111111111111111111111111112",
-  "name": "Wrapped SOL",
-  "symbol": "SOL",
-  "risk_score": 5,
-  "risk_level": "LOW",
-  "summary": "Low risk. Mint/freeze authorities active but deeply liquid with distributed holders.",
-  "checks": {
-    "mint_authority": {
-      "status": "ACTIVE",
-      "authority": "...",
-      "risk": "SAFE"
-    },
-    "freeze_authority": {
-      "status": "RENOUNCED",
-      "authority": null,
-      "risk": "SAFE"
-    },
-    "top_holders": { "top_10_percentage": 12.5, "risk": "SAFE" },
-    "liquidity": {
-      "liquidity_rating": "DEEP",
-      "lp_locked": true,
-      "risk": "SAFE"
-    },
-    "honeypot": { "can_sell": true, "risk": "SAFE" },
-    "metadata": { "mutable": false, "risk": "SAFE" },
-    "token_age_hours": 8760
-  },
-  "changes": null,
-  "alerts": []
-}
-```
+Two decisions shaped it. I compute the score from chain reads and swap quotes rather than from a third-party security API or a model, because a score with named inputs is reproducible and worth signing: every full report is signed with Ed25519 (a public-key signature scheme) over `{mint, checked_at, rpc_slot, risk_score}`, the response carries `response_signature` and `signer_pubkey` (also shown at `/health`), and `POST /v1/verify` checks a signature for free, so a forwarded verdict is an attestation, a signed statement anyone can confirm. The second is that payment doubles as authentication: x402 replaces API keys as the default, and subscription keys exist for callers without a wallet.
 
-Delta detection is automatic — `changes` and `alerts` populate when a token's state differs from its previous check.
+## Deploy
 
-## Response (Lite Check)
+The API runs on Railway; https://tokensafe-production.up.railway.app/health is its liveness page (the root answers 404 because there is no root route). It is built from the `Dockerfile`: a multi-stage `node:22-slim` image that compiles with `tsc`, installs production dependencies with `npm ci --omit=dev` and runs `node dist/index.js` with a `/health` container healthcheck. The deploy trigger and the secrets (treasury wallet, Helius key, Coinbase CDP facilitator keys, signing key) live in Railway; this repository has no deploy workflow. `/health` reports the network, the signer public key and cache statistics; on 2026-09-27 it showed mainnet and 58 days of uptime. Scry (web at the Live link, Telegram at https://t.me/ScryTokenBot) is a separate service whose front end calls this API.
 
-```json
-{
-  "mint": "So11111111111111111111111111111111111111112",
-  "name": "Wrapped SOL",
-  "symbol": "SOL",
-  "risk_score": 5,
-  "risk_level": "LOW",
-  "summary": "Low risk. ...",
-  "authorities_renounced": true,
-  "trusted_authority": false,
-  "has_liquidity": true,
-  "can_sell": true,
-  "data_confidence": "complete",
-  "is_token_2022": false,
-  "has_risky_extensions": false,
-  "full_report": {
-    "url": "https://tokensafe-production.up.railway.app/v1/check?mint=So11111111111111111111111111111111111111112",
-    "price_usd": "$0.02",
-    "payment_protocol": "x402",
-    "includes": "authority addresses, holder breakdown, LP lock status, honeypot details, delta detection"
-  }
-}
-```
+To run your own instance, see [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md). In short, you need a treasury wallet address, a Helius API key, and either Coinbase CDP keys or `FACILITATOR_URL=https://facilitator.payai.network`, because the default facilitator answers 401 without CDP keys and the server exits at boot.
 
-## x402 Payment Flow
+## Testing
 
-```
-Agent  →  GET /v1/check?mint=<TOKEN>
-Server →  402 + PAYMENT-REQUIRED header (base64 JSON)
-Agent  →  wallet auto-signs $0.02 USDC transfer
-Agent  →  GET /v1/check?mint=<TOKEN> + PAYMENT-SIGNATURE header
-Server →  200 + full analysis + PAYMENT-RESPONSE receipt
-```
+`npm test` runs vitest: 18 files, 523 tests, 21.5 seconds on Node 22.22.2 (measured 2026-09-27). They cover the score weights and thresholds, every check module against mocked RPC and Jupiter responses, LP-lock detection, delta detection and alerts, the policy engine, the HTTP routes through supertest with the checker and the x402 gate mocked out, API keys, audits, webhooks, the MCP payment gate, response signing with `/v1/verify`, and the discovery documents. Nothing in the suite talks to Solana, Jupiter, DexScreener or a facilitator, and no payment is settled.
 
-USDC settles to the operator's Solana wallet via the Coinbase CDP facilitator
-(configurable with `FACILITATOR_URL`).
+`SMOKE_URL=https://tokensafe-production.up.railway.app npm run test:smoke` runs 25 read-only checks against a running instance: health headers, the 402 challenge and its $0.02 amount, batch and discovery routes, MCP `tools/list` and a tool call, the lite and decide endpoints on real tokens, and error shapes. It passed 25 of 25 against production in 19 seconds on 2026-09-27. It does not pay. The paid path is `SVM_PRIVATE_KEY=<base58 keypair> npm run test:x402`, which needs a funded wallet and was not run here.
 
-## Verifiable attestations
+There is no CI workflow in this repository; the tests run on a developer's machine.
 
-Every full check is Ed25519-signed over `{mint, checked_at, rpc_slot, risk_score}`.
-The response carries `response_signature` and `signer_pubkey` (also exposed at
-`/health`). Anyone can confirm the verdict is genuine — no need to trust whoever
-forwarded it:
+## Limitations
 
-```bash
-curl -s -X POST https://tokensafe-production.up.railway.app/v1/verify \
-  -H 'Content-Type: application/json' \
-  -d '{"mint":"<MINT>","checked_at":"<ISO>","rpc_slot":<N>,"risk_score":<N>,"response_signature":"<hex>"}'
-# → { "valid": true, "signer_pubkey": "<hex>" }
-```
+This reads chain state, so it can only catch what chain state shows. A developer who simply sells, or a compromised team wallet, produces a clean report until the moment it happens. A SAFE verdict means the checks found nothing. It does not mean the token is safe.
 
-Because the score is computed from raw chain state (not resold from a
-third-party API), the signature is a real proof of provenance — a treasury or
-compliance agent can store it as auditable proof-of-diligence. Operators should
-set a persistent `RESPONSE_SIGNING_KEY` (`npm run signing-key:generate`) so
-attestations stay verifiable across deploys.
+Honeypot detection compares a Jupiter buy quote with a sell quote for 0.1 SOL, so it misses logic that refuses only some sellers or only after some time, and a token with no Jupiter route scores as unknown (10 points) rather than as a honeypot. LP-lock detection runs only for Raydium AMM v4 pools and recognises nine program addresses from two lockers, Streamflow and UNCX, plus LP tokens sent to the incinerator address (a burn address nobody controls); in such a pool, liquidity locked anywhere else reads as unlocked and costs 15 points, and for every other pool type the lock is never checked.
 
-## Self-Hosting
+Liquidity and honeypot depend on Jupiter and DexScreener, which are off-chain services: when they time out the check is marked degraded, an uncertainty penalty applies, and the result is cached for 30 seconds. A normal result is cached for 5 minutes, so a rug in progress can be that stale. Top-holder concentration comes from the 20 largest token accounts, and a token with too many accounts for the RPC to list is marked WIDELY_HELD with 0% concentration.
 
-```bash
-git clone https://github.com/ampactor-labs/tokensafe
-cd tokensafe
-cp .env.example .env
-# Set TREASURY_WALLET_ADDRESS and HELIUS_API_KEY in .env
-npm install
-npm run dev
-```
+The signing key is ephemeral unless `RESPONSE_SIGNING_KEY` is set, and `/v1/verify` only checks against the current key, so a signature issued before a restart without that variable cannot be verified. Nothing in this repository is exercised by CI, and the deploy and its secrets live in Railway, so the receipts are the signed response and the on-chain payment.
 
-Requires: Node 22+, a Solana wallet, and a free [Helius](https://helius.dev) API key.
+## Roadmap
 
-## Architecture
-
-TypeScript + Express. Every check reads raw Solana blockchain state via Helius RPC. No GoPlus, no RugCheck, no off-chain databases, no ML models.
-
-- 6-9 RPC calls + 1-2 HTTP calls per check
-- 5-minute in-memory LRU cache (10K entries)
-- Ed25519 response signing for audit trail
-- Docker-ready (node:22-slim, non-root user)
-
-## Verification
-
-18 test files, 525 cases, run with `npm test` (vitest). They cover the risk scoring, the Jupiter quote paths, the audit ledger, the delta endpoint, and the x402 payment middleware.
-
-`npm run test:smoke` hits a running instance end to end: it pays a real 402 challenge and checks that the Ed25519 signature on the response verifies. That is the check that matters here, because a signature nobody verifies is decoration.
-
-There is no CI workflow in this repo. Deploys go through Railway, so treat the signed response and the on-chain payment as the receipts rather than a badge.
-
-## Weak spots
-
-This reads chain state, so it can only catch what chain state shows. A developer who simply sells, an off-chain social rug, or a compromised team wallet all produce a clean report right up until they do not. A SAFE verdict means the checks below found nothing, not that the token is safe.
-
-Honeypot detection compares a Jupiter buy quote with a sell quote, which misses conditional logic that only refuses some sellers or only after some time. LP-lock detection recognizes nine known locker programs, so liquidity locked in an unrecognized contract reads as unlocked and scores worse than it deserves.
-
-No CI runs in this repo. The signing key, the treasury address, and the deploy live in Railway, so the receipts here are the signed response and the on-chain payment, not a green badge.
+- Paid full-check tool over MCP. `src/mcp/payment.ts` gates the `solana_token_safety_check_full` tool with x402 at the JSON-RPC layer, but `PAID_MCP_TOOL_ENABLED` stays `false` until `npm run test:x402-mcp` confirms a real settlement, so the endpoint advertises only the free tool today (confirmed with a live `tools/list` on 2026-09-27).
 
 ## License
 
-MIT
+No license chosen yet. The repository has no LICENSE file and `package.json` has no `license` field; `.claude-plugin/plugin.json` says MIT, so the owner should add the file or correct that claim.
