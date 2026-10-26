@@ -85,6 +85,18 @@ CREATE INDEX IF NOT EXISTS idx_deliveries_subscription
 CREATE INDEX IF NOT EXISTS idx_deliveries_status
   ON webhook_deliveries(status, next_retry_at);
 
+-- One row per (subscription, mint) that is currently at or above its threshold
+-- and has been alerted on; alerted_level is the worst level reported since it
+-- crossed. No row means the next poll at or above the threshold alerts.
+CREATE TABLE IF NOT EXISTS webhook_alert_state (
+  subscription_id INTEGER NOT NULL,
+  mint TEXT NOT NULL,
+  alerted_level TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (subscription_id, mint),
+  FOREIGN KEY (subscription_id) REFERENCES webhook_subscriptions(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS api_keys (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   key_hash TEXT NOT NULL UNIQUE,
@@ -138,9 +150,46 @@ export function getDb(): Database.Database {
   db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
-  db.exec(SCHEMA);
+  initSchema(db);
   logger.info({ dbPath }, "SQLite database initialized");
   return db;
+}
+
+function initSchema(d: Database.Database): void {
+  d.exec(SCHEMA);
+  migrate(d);
+}
+
+/**
+ * One-time data migrations, tracked in SQLite's user_version.
+ *
+ * 1: webhook alerts became edge-triggered. Before that every poll at or above
+ *    the threshold queued a delivery, so a pair whose latest delivery came from
+ *    its latest poll is still above and has already been told. Seed those as
+ *    alerted so the switch doesn't send one more; the first poll clears any
+ *    that have since dropped below.
+ */
+export function migrate(d: Database.Database): void {
+  const version = d.pragma("user_version", { simple: true }) as number;
+  if (version < 1) {
+    // A delivery within half a poll interval of the last check was queued by
+    // that same poll; anything older belongs to an earlier episode.
+    const windowSeconds = Math.floor(config.monitorIntervalMs / 2000);
+    d.transaction(() => {
+      d.prepare(
+        `INSERT OR IGNORE INTO webhook_alert_state (subscription_id, mint, alerted_level)
+         SELECT dl.subscription_id, dl.mint, json_extract(dl.payload_json, '$.risk_level')
+         FROM webhook_deliveries dl
+         JOIN webhook_subscriptions s ON s.id = dl.subscription_id
+         WHERE dl.id IN (SELECT MAX(id) FROM webhook_deliveries GROUP BY subscription_id, mint)
+           AND json_extract(dl.payload_json, '$.risk_level') IS NOT NULL
+           AND s.last_checked_at IS NOT NULL
+           AND dl.delivered_at >= datetime(s.last_checked_at, '-' || ? || ' seconds')
+           AND EXISTS (SELECT 1 FROM json_each(s.mints_json) WHERE value = dl.mint)`,
+      ).run(windowSeconds);
+      d.pragma("user_version = 1");
+    })();
+  }
 }
 
 export function closeDb(): void {
@@ -155,7 +204,7 @@ export function initTestDb(): Database.Database {
   db = new Database(":memory:");
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
-  db.exec(SCHEMA);
+  initSchema(db);
   return db;
 }
 
@@ -231,11 +280,24 @@ export function updateSubscription(
   if (setClauses.length === 0) return getSubscription(id);
 
   values.push(id);
-  getDb()
-    .prepare(
+  const d = getDb();
+  d.transaction(() => {
+    const before = getSubscription(id);
+    d.prepare(
       `UPDATE webhook_subscriptions SET ${setClauses.join(", ")} WHERE id = ?`,
-    )
-    .run(...values);
+    ).run(...values);
+    // A new threshold, mint list or pause changes what "already alerted"
+    // meant, so the next poll re-evaluates from scratch.
+    const rearm =
+      before !== null &&
+      ((updates.threshold !== undefined && updates.threshold !== before.threshold) ||
+        (updates.mints !== undefined &&
+          JSON.stringify(updates.mints) !== JSON.stringify(before.mints)) ||
+        (updates.active !== undefined && updates.active !== before.active));
+    if (rearm) {
+      d.prepare("DELETE FROM webhook_alert_state WHERE subscription_id = ?").run(id);
+    }
+  })();
   return getSubscription(id);
 }
 
@@ -285,6 +347,50 @@ export function markFailed(id: number, nextRetryAt: string | null): void {
       "UPDATE webhook_deliveries SET status = 'failed', attempts = attempts + 1, next_retry_at = ? WHERE id = ?",
     )
     .run(nextRetryAt, id);
+}
+
+// ─── Alert state ─────────────────────────────────────────────────────────────
+
+export function getAlertedLevel(
+  subscriptionId: number,
+  mint: string,
+): string | null {
+  const row = getDb()
+    .prepare(
+      "SELECT alerted_level FROM webhook_alert_state WHERE subscription_id = ? AND mint = ?",
+    )
+    .get(subscriptionId, mint) as { alerted_level: string } | undefined;
+  return row?.alerted_level ?? null;
+}
+
+/**
+ * Record one poll's outcome for a (subscription, mint) in a single
+ * transaction: queue the delivery when there is one, then store the alerted
+ * level, or clear it when nextLevel is null (back below the threshold).
+ */
+export function applyAlertDecision(
+  subscriptionId: number,
+  mint: string,
+  nextLevel: string | null,
+  payloadJson: string | null,
+): void {
+  const d = getDb();
+  d.transaction(() => {
+    if (payloadJson !== null) createDelivery(subscriptionId, mint, payloadJson);
+    if (nextLevel === null) {
+      d.prepare(
+        "DELETE FROM webhook_alert_state WHERE subscription_id = ? AND mint = ?",
+      ).run(subscriptionId, mint);
+    } else {
+      d.prepare(
+        `INSERT INTO webhook_alert_state (subscription_id, mint, alerted_level)
+         VALUES (?, ?, ?)
+         ON CONFLICT(subscription_id, mint) DO UPDATE
+           SET alerted_level = excluded.alerted_level, updated_at = datetime('now')
+           WHERE alerted_level != excluded.alerted_level`,
+      ).run(subscriptionId, mint, nextLevel);
+    }
+  })();
 }
 
 export function getPendingDeliveries(): WebhookDelivery[] {

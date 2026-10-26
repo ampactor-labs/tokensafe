@@ -499,7 +499,12 @@ Results are cached for 5 minutes. Repeated checks within this window return `X-C
 
 ## Webhook Monitoring
 
-Subscribe to risk alerts for specific mints. The server polls watched mints on a background interval and POSTs to your callback URL when `risk_score >= threshold`.
+Subscribe to risk alerts for specific mints. The server polls watched mints on a background interval (`MONITOR_INTERVAL_MS`, 5 minutes by default) and POSTs to your callback URL on changes, not on every poll:
+
+- **`crossed`**: the mint's `risk_score` reached the threshold (`risk_score >= threshold`), including on the first poll after you subscribe if it is already there.
+- **`escalated`**: while it stays at or above the threshold, its `risk_level` climbed past the worst level already reported (for example `HIGH` to `CRITICAL`). Easing back down sends nothing.
+
+Once the score falls below the threshold the mint re-arms, and the next time it reaches the threshold sends `crossed` again. State is kept per subscription and per mint, so each mint in a subscription alerts on its own. Changing a subscription's `threshold`, `mints` or `active` resets it, so the next poll re-evaluates from scratch; a failed check leaves it untouched.
 
 **Authentication:** All webhook endpoints require `Authorization: Bearer <WEBHOOK_ADMIN_BEARER>`.
 
@@ -567,9 +572,13 @@ Delivery payload:
   "risk_score": 75,
   "risk_level": "CRITICAL",
   "summary": "active mint authority, no liquidity detected",
-  "checked_at": "2026-03-01T12:00:00.000Z"
+  "checked_at": "2026-03-01T12:00:00.000Z",
+  "reason": "crossed",
+  "threshold": 50
 }
 ```
+
+`reason` is `crossed` or `escalated` (see above), and `threshold` is the subscription's threshold at the time of the poll.
 
 Retry policy: 3 attempts max with exponential backoff (1min, 5min, then abandoned).
 
